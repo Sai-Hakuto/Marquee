@@ -1,0 +1,326 @@
+import SwiftUI
+import AppKit
+
+// The window "chrome" around the main content: top nav bar, bottom-right control cluster,
+// the loading-logo overlay, the carousel's game info bar, and the small input-method badge.
+
+extension ContentView {
+
+    // MARK: - Top Bar
+
+    var topBar: some View {
+        HStack(spacing: 0) {
+            // Logo + title — left anchor, fixed min-width so filter chips stay centered.
+            // 72px logo used as-is (no resize) for max crispness on Retina.
+            HStack(spacing: 8) {
+                if let img = loadSmallLogoFromBundle() {
+                    Image(nsImage: img)
+                        .offset(y: 18)   // push the icon down so it isn't flush to the window top
+                        .shadow(color: .black.opacity(0.55), radius: 10, x: 0, y: 4)
+                        .allowsHitTesting(false)
+                }
+                if let titleImg = loadTitleFromBundle() {
+                    Image(nsImage: titleImg)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 20)
+                        .opacity(0.95)
+                        .offset(y: 5)
+                } else {
+                    Text("Marquee")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(minWidth: 170, alignment: .leading)
+
+            Spacer()
+
+            // Source filter chips — centered; highlighted when keyboard-navigating to topBar zone
+            HStack(spacing: 6) {
+                ForEach(Array(visibleFilters.enumerated()), id: \.element) { idx, filter in
+                    Button(filter.label) {
+                        appState.sourceFilter = filter
+                        appState.selectedIndex = 0
+                        uiFocus = .carousel
+                        if appState.viewMode == .carousel {
+                            carousel.loadGames(appState.filteredGames, animated: false)
+                            applyArtToCarousel()
+                        }
+                    }
+                    .buttonStyle(FilterChipStyle(
+                        isActive: appState.sourceFilter == filter,
+                        isDim: filter == .hidden,
+                        isFocused: uiFocus == .topBar && topBarFocusIdx == idx
+                    ))
+                    .hoverHighlight(scale: 1.08, brighten: 0.12)
+                }
+            }
+
+            Spacer()
+
+            // View mode buttons — right anchor, same min-width as logo group
+            HStack(spacing: 4) {
+                ForEach(Array(AppState.ViewMode.allCases.enumerated()), id: \.element) { idx, mode in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            appState.viewMode = mode
+                        }
+                        if mode == .carousel {
+                            carousel.loadGames(appState.filteredGames, animated: false,
+                                               selectedIndex: appState.selectedIndex)
+                            applyArtToCarousel()
+                        }
+                    } label: {
+                        Image(systemName: mode.sfSymbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 34, height: 28)
+                            .foregroundStyle(appState.viewMode == mode ? .white : .white.opacity(0.38))
+                            .background(appState.viewMode == mode ? Color.white.opacity(0.18) : .clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(
+                                        uiFocus == .topBar && topBarFocusIdx == visibleFilters.count + idx
+                                            ? Color.white.opacity(0.9) : Color.clear,
+                                        lineWidth: 2
+                                    )
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .hoverHighlight(scale: 1.1, brighten: 0.12)
+                    .help(mode.label)
+                }
+
+                Rectangle()
+                    .fill(.white.opacity(0.18))
+                    .frame(width: 1, height: 16)
+                    .padding(.horizontal, 2)
+
+                // Full-screen toggle — mouse affordance (also ⌥⏎ / ⌃⌘F).
+                // NSApp.delegate is SwiftUI's own wrapper around AppDelegate, not the instance
+                // itself, so casting it (the old code) silently failed and this button did
+                // nothing — session.appDelegate is the same weak reference GameSessionManager
+                // already uses to reach the real AppDelegate.
+                Button { session.appDelegate?.toggleFullScreen() } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 30, height: 28)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight(scale: 1.1, brighten: 0.12)
+                .help("Toggle Full Screen (⌥⏎ / ⌃⌘F)")
+            }
+            .frame(minWidth: 170, alignment: .trailing)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 18)
+        .padding(.vertical, 10)
+        .frame(height: 52)
+        .background(Color(red: 0.18, green: 0.04, blue: 0.44).opacity(0.82))
+    }
+
+    // MARK: - Buy Me A Coffee badge
+
+    var coffeeButton: some View {
+        Button {
+            NSWorkspace.shared.open(URL(string: "https://www.buymeacoffee.com/jackharvest")!)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cup.and.saucer.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text("Prove my wife wrong.")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(.black)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(red: 1.0, green: 0.867, blue: 0.0))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.black, lineWidth: 1.3))
+        }
+        .buttonStyle(.plain)
+        .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
+        .opacity(coffeeButtonHovered || !coffeeButtonDimmed ? 1.0 : 0.3)
+        .animation(.easeInOut(duration: 0.2), value: coffeeButtonHovered)
+        .onHover { coffeeButtonHovered = $0 }
+        .help("Buy Me A Coffee")
+    }
+
+    // MARK: - Bottom Controls (motion toggle + theme swatches + version badge)
+    // White ring appears on the focused item when the bottomControls zone is active.
+
+    var bottomControls: some View {
+        HStack(spacing: 7) {
+            Button { appState.setMotion(!appState.motionEnabled) } label: {
+                Image(systemName: "waveform")
+                    .font(.system(size: 11, weight: appState.motionEnabled ? .bold : .regular))
+                    .foregroundStyle(appState.motionEnabled ? .white.opacity(0.85) : .white.opacity(0.22))
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(
+                                uiFocus == .bottomControls && bottomFocusIdx == 0
+                                    ? Color.white.opacity(0.9) : .clear,
+                                lineWidth: 2
+                            )
+                            .padding(-4)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hoverHighlight()
+            .help("Toggle motion animation (Down arrow from carousel)")
+            .animation(.easeInOut(duration: 0.15), value: appState.motionEnabled)
+
+            Button { appState.setHeroBackground(!appState.heroBackgroundEnabled) } label: {
+                Image(systemName: "photo.fill")
+                    .font(.system(size: 11, weight: appState.heroBackgroundEnabled ? .bold : .regular))
+                    .foregroundStyle(appState.heroBackgroundEnabled ? .white.opacity(0.85) : .white.opacity(0.22))
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(
+                                uiFocus == .bottomControls && bottomFocusIdx == 1
+                                    ? Color.white.opacity(0.9) : .clear,
+                                lineWidth: 2
+                            )
+                            .padding(-4)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hoverHighlight()
+            .help("Toggle game backdrop art")
+            .animation(.easeInOut(duration: 0.15), value: appState.heroBackgroundEnabled)
+
+            Rectangle()
+                .fill(.white.opacity(0.18))
+                .frame(width: 1, height: 10)
+
+            ForEach(Array(AppState.AppTheme.allCases.enumerated()), id: \.element) { idx, theme in
+                themeSwatch(idx: idx, theme: theme)
+            }
+
+            Text("v0.22.0")
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.18))
+        }
+    }
+
+    private func themeSwatch(idx: Int, theme: AppState.AppTheme) -> some View {
+        Button { appState.setTheme(theme) } label: {
+            Circle()
+                .fill(theme.swatch)
+                .frame(width: 12, height: 12)
+                // Always-on rim so the near-black "Black" swatch stays visible.
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.38), lineWidth: 1))
+                .overlay(
+                    Circle().strokeBorder(
+                        appState.currentTheme == theme ? Color.white : Color.clear,
+                        lineWidth: 2
+                    )
+                )
+                .overlay(
+                    Circle().strokeBorder(
+                        uiFocus == .bottomControls && bottomFocusIdx == idx + 2
+                            ? Color.white.opacity(0.9) : .clear,
+                        lineWidth: 2
+                    )
+                    .padding(-4)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .hoverHighlight()
+        .help(theme.label)
+    }
+
+    // MARK: - Loading overlay + info bar + input badge
+
+    var logoOverlay: some View {
+        ZStack {
+            appState.currentTheme.backgroundColor.ignoresSafeArea()
+            if let img = NSImage(named: "AppIcon") ?? loadLogoFromBundle() {
+                Image(nsImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 200, height: 200)
+                    .opacity(logoOpacity)
+                    .scaleEffect(logoScale)
+                    .blur(radius: logoBlur)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    var gameInfoBar: some View {
+        let game = appState.filteredGames[safe: appState.selectedIndex]
+        return VStack(spacing: 6) {
+            if let game {
+                HStack(spacing: 8) {
+                    SourceBadge(game: game)
+                    if !game.isInstalled {
+                        Text("NOT INSTALLED")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.white.opacity(0.15)))
+                    }
+                }
+                Text(game.title)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.9), radius: 6, x: 0, y: 2)
+                Text("Press Return to launch")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
+        .padding(.bottom, 36)
+        .animation(.easeInOut(duration: 0.2), value: game?.id)
+    }
+
+    // Subtle input-method badge positioned just below the top bar on the right.
+    var inputMethodBadge: some View {
+        let (icon, hint): (String, String) = {
+            switch appState.lastInputMethod {
+            case .keyboard:   return ("keyboard", "Keyboard / WASD")
+            case .mouse:      return ("cursorarrow", "Mouse")
+            case .controller: return ("gamecontroller", "Controller")
+            }
+        }()
+        return Image(systemName: icon)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.42))
+            .frame(width: 24, height: 24)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.09)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+            .help(hint)
+            .animation(.easeInOut(duration: 0.25), value: appState.lastInputMethod)
+    }
+
+    // MARK: - Bundled logo assets
+
+    // 128px logo for the loading overlay (large splash)
+    private func loadLogoFromBundle() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "Marquee-logo-icon_128", withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    // 72px logo for the nav bar — used as-is (no SwiftUI resize) for crispness on Retina
+    private func loadSmallLogoFromBundle() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "Marquee-logo-icon_72", withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    // Title wordmark image ("Marquee") to replace the plain-text title in the nav bar
+    private func loadTitleFromBundle() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "Marqee-Title", withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }
+}
