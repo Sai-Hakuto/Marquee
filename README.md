@@ -15,27 +15,47 @@ A console-style game launcher for macOS that finds every game you own — CrossO
 
 Games on a Mac end up scattered across half a dozen launchers: native titles in `/Applications`, Steam's library, Epic's launcher, GOG installs, and Windows games running through CrossOver — some of those installed through a *Windows* copy of Steam living inside a bottle. Marquee scans all of it automatically and gives you one place to browse, search, and play.
 
+|  |  |
+|---|---|
+| ![The carousel, in motion](docs/screenshots/carousel.gif) | ![Rainbow Slide, in motion](docs/screenshots/rainbow-slide-motion.gif) |
+| *The carousel — real spring physics, not a slideshow* | *Rainbow Slide — a Wii Menu-style wheel of covers* |
+
 ## Features
 
-- **A real 3D carousel** — WiiFlow-inspired cover flow built on SceneKit, with springy motion, entrance animations, and a selection ring. Grid, Wall, and List views included when you're in a browsing mood.
-- **Every store, found automatically** — CrossOver bottles (Start Menu shortcuts, `cxmenu.conf`, bottled-Steam `.acf` manifests, and bare game folders), native Steam, Epic, GOG, and Mac App Store games with a games category. Storefront clients themselves are filtered out so "Steam" never shows up as a game.
-- **Launches games the right way** — Steam games via `steam://`, Epic via its launcher URL, CrossOver games through CrossOver's own wine environment, and bottled-Steam titles through the bottled Steam client itself (so DRM, overlay, and cloud saves work).
-- **Gets out of the way** — press PLAY and Marquee fades its music, minimizes to the Dock, and watches the game's process. When you quit the game, Marquee restores itself and fades the music back in. Idle CPU while hidden is aggressively minimized.
-- **Real playtime tracking** — sessions are timed from the moment the game's process is confirmed running to the moment it exits. Play counts, last played, and total playtime feed the sort menu and the detail page.
-- **Cover art that looks right** — art from Steam's public listings, [SteamGridDB](https://www.steamgriddb.com) (free API key), or your own image files. Wrong cover? Right-click → *Fix Cover Art…* and pick the correct one, per game.
-- **Keyboard, mouse, and controller** — every part of the UI is reachable from all three. WASD works. A game controller's sticks, buttons, and shoulders navigate everything.
+**Browsing**
+- **Seven view modes** — Carousel (full 3D coverflow), Rainbow Slide (a Wii Menu-style wheel), Big, Grid, Wall, List, and Compact List (Playnite-style dense rows) — switch instantly with ⌘1–7.
 - **Live search and smart sorting** — type anywhere to search (fuzzy matching included); sort by name, platform, playtime, most/last played, or date installed.
 - **The details page** — screenshots, a trailer with eShop-style playback controls, file size, install location, and metadata pulled from Steam's public store data.
+
+![Grid view](docs/screenshots/grid-view.jpg)
+
+**Your library, automatically**
+- **Every store, found automatically** — CrossOver bottles (Start Menu shortcuts, `cxmenu.conf`, bottled-Steam `.acf` manifests, and bare game folders), native Steam, Epic, GOG, and Mac App Store games with a games category. Storefront clients themselves are filtered out so "Steam" never shows up as a game.
+- **Bring your own library** — drag any app or Windows exe onto the window (Plex, an emulator, a one-off .exe) and it joins your shelf, no scanner required. Remove it just as easily whenever you like.
+- **Launches games the right way** — Steam games via `steam://`, Epic via its launcher URL, CrossOver games through CrossOver's own wine environment, and bottled-Steam titles through the bottled Steam client itself (so DRM, overlay, and cloud saves work).
+- **Real playtime tracking** — sessions are timed from the moment the game's process is confirmed running to the moment it exits. Play counts, last played, and total playtime feed the sort menu and the detail page.
+- **Cover art that looks right** — art from Steam's public listings, [SteamGridDB](https://www.steamgriddb.com) (free API key), or your own image files. Wrong cover? Right-click → *Fix Cover Art…* and pick the correct one, per game.
+
+![Compact List view](docs/screenshots/compact-list.jpg)
+
+**Couch mode**
+- **A console-style pause menu** — press Esc (or a controller's Menu button, or the gear in the nav bar) for a PlayStation-style overlay with every setting and action in the app: view, filter, sort, full screen, themes, volume, refresh, check for updates, quit. The menu bar is never required.
+- **Boots like a console** — flip on *Launch at Login* and *Start in Full Screen* and a Mac mini under the TV lands in your fullscreen library on power-on.
+- **Full controller support** — keyboard, mouse, WASD, and game controllers all drive the exact same navigation, with two remapping presets or a fully custom layout.
+- **Updates itself** — Marquee checks its own GitHub releases and can download, install, and relaunch in place, from the app menu, Settings, or the pause menu. No terminal required, ever.
+
+![Couch Mode pause menu](docs/screenshots/couch-mode.jpg)
+
+**The rest**
+- **Gets out of the way** — press PLAY and Marquee fades its music, minimizes to the Dock, and watches the game's process. When you quit the game, Marquee restores itself and fades the music back in. Idle CPU while hidden is aggressively minimized.
 - **Background music with a visualizer** — a bundled soundtrack player with an FFT visualizer, per-track shuffle weights, and volume that ducks for trailers and game sessions.
-- **Favorites, hiding, themes** — pin favorites to the front, hide the clutter, and pick your backdrop.
-- **A console-style pause menu** — press Esc (or a controller's Menu button, or the gear in the nav bar) for a PlayStation-style overlay with every setting and action in the app: view, filter, sort, full screen, themes, volume, refresh, quit. The menu bar is never required — full screen with only a controller in hand is a first-class way to live.
-- **Couch mode** — flip on *Launch at Login* and *Start in Full Screen* (in the pause menu or Settings) and a Mac mini under the TV boots straight into your library like a console.
+- **Favorites, hiding, themes** — pin favorites to the front, hide the clutter (or remove custom entries outright), and pick your backdrop.
 - **Works offline** — no internet? Cached art still shows, your library is fully browsable, and installed games launch. Marquee quietly marks itself OFFLINE, skips the network instead of hanging on it, and fills in missing art automatically the moment you're back online.
 
 | | | |
 |---|---|---|
-| ![Grid view](docs/screenshots/grid-view.jpg) | ![List view](docs/screenshots/list-view.jpg) | ![Detail page](docs/screenshots/detail-view.jpg) |
-| ![Wall view](docs/screenshots/wall-view.jpg) | ![Search and sort](docs/screenshots/search-sort.jpg) | ![Carousel](docs/screenshots/carousel-blackwidow.jpg) |
+| ![List view](docs/screenshots/list-view.jpg) | ![Wall view](docs/screenshots/wall-view.jpg) | ![Search and sort](docs/screenshots/search-sort.jpg) |
+| ![Rainbow Slide](docs/screenshots/rainbow-slide.jpg) | ![Detail page](docs/screenshots/detail-view.jpg) | |
 
 ## Getting started
 
