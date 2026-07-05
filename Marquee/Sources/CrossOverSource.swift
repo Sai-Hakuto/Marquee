@@ -4,6 +4,20 @@ struct CrossOverSource {
     private static let bottlesRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/CrossOver/Bottles")
 
+    // Bottle names, sorted — CustomSource uses these to give user-added Windows exes a
+    // launchable bottle (first = default) and Settings' Added Games list offers them as a
+    // per-entry picker. Empty when CrossOver isn't installed.
+    static func availableBottles() -> [String] {
+        guard let bottles = try? FileManager.default.contentsOfDirectory(
+            at: bottlesRoot, includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return bottles
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+            .map(\.lastPathComponent)
+            .sorted()
+    }
+
     // MARK: - Known-launcher filtering
     //
     // CrossOver bottles routinely run a genuine Windows storefront client (Steam, Epic Games

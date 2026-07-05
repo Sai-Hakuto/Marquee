@@ -38,9 +38,12 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 libracySection
+                customLibrarySection
                 appearanceSection
                 musicSection
                 behaviorSection
+                controllerSection
+                couchModeSection
                 resetSection
             }
             .padding(22)
@@ -48,6 +51,8 @@ struct SettingsView: View {
         .frame(width: 480, height: 660)
         .background(Color(red: 0.07, green: 0.04, blue: 0.14))
         .foregroundStyle(.white)
+        // Launch at Login lives in System Settings' hands too — re-read it on every open.
+        .onAppear { appState.refreshLaunchAtLogin() }
     }
 
     // MARK: - Header
@@ -127,6 +132,123 @@ struct SettingsView: View {
                 .menuStyle(.borderlessButton)
             }
         }
+    }
+
+    // MARK: - Custom Library section (user scan folders + individually added games)
+
+    private var customLibrarySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Custom Library")
+
+            PreferenceRow(icon: "folder.badge.plus", iconColor: .teal,
+                          title: "Scan Folders",
+                          subtitle: "Extra places Marquee looks for games — network shares, external drives") {
+                // customLibraryVersion lives on AppState purely so this control re-renders —
+                // the lists themselves live in CustomSource/UserDefaults, invisible to Observation.
+                let _ = appState.customLibraryVersion
+                VStack(alignment: .leading, spacing: 6) {
+                    if CustomSource.scanFolders.isEmpty {
+                        Text("None yet — you can also drop a folder anywhere on the Marquee window")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.4))
+                    } else {
+                        ForEach(CustomSource.scanFolders, id: \.self) { path in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text((path as NSString).lastPathComponent)
+                                        .font(.system(size: 12, weight: .medium))
+                                    Text(path)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.white.opacity(0.55))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer()
+                                Button {
+                                    appState.removeCustomScanFolder(path)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.white.opacity(0.35))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.04)))
+                        }
+                    }
+                    addButton("Add Folder…") { appState.promptAddScanFolder() }
+                }
+            }
+
+            PreferenceRow(icon: "plus.app.fill", iconColor: .indigo,
+                          title: "Added Games",
+                          subtitle: "Individually added apps and Windows exes — drag & drop works too") {
+                let _ = appState.customLibraryVersion
+                VStack(alignment: .leading, spacing: 6) {
+                    if CustomSource.gameEntries.isEmpty {
+                        Text("None yet — you can also drop a game anywhere on the Marquee window")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.4))
+                    } else {
+                        ForEach(CustomSource.gameEntries) { entry in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(entry.url.deletingPathExtension().lastPathComponent)
+                                        .font(.system(size: 12, weight: .medium))
+                                    Text(entry.path)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.white.opacity(0.55))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer()
+                                // Bottle picker only earns its keep once there's an actual
+                                // choice to make — a single-bottle setup has nothing to pick.
+                                if entry.isExe, CrossOverSource.availableBottles().count > 1 {
+                                    Menu {
+                                        ForEach(CrossOverSource.availableBottles(), id: \.self) { bottle in
+                                            Button(bottle) { appState.setCustomGameBottle(entry, bottle: bottle) }
+                                        }
+                                    } label: {
+                                        Text(entry.bottle ?? "—")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundStyle(.white.opacity(0.75))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.08)))
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .fixedSize()
+                                }
+                                Button {
+                                    appState.removeCustomGame(entry)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.white.opacity(0.35))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.04)))
+                        }
+                    }
+                    addButton("Add Game…") { appState.promptAddGame() }
+                }
+            }
+        }
+    }
+
+    // Small pill button shared by both Custom Library rows.
+    private func addButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.07)))
     }
 
     // MARK: - Appearance section
@@ -241,6 +363,87 @@ struct SettingsView: View {
                                          // change wouldn't take effect until the next launch.
                                          soundEffects.enabled = $0
                                      }))
+        }
+    }
+
+    // MARK: - Controller section
+
+    private var controllerSection: some View {
+        let store = ControllerMappingStore.shared
+        return VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Controller")
+
+            PreferenceRow(icon: "gamecontroller.fill", iconColor: .blue,
+                          title: "Button Layout", subtitle: "Which physical button confirms and which cancels") {
+                HStack(spacing: 6) {
+                    ForEach(ControllerMappingStore.Preset.allCases, id: \.self) { preset in
+                        Button(preset.label) { store.applyPreset(preset) }
+                            .buttonStyle(FilterChipStyle(isActive: store.activePreset == preset))
+                    }
+                }
+            }
+
+            PreferenceRow(icon: "arrow.triangle.swap", iconColor: .orange,
+                          title: "Custom Bindings",
+                          subtitle: "Rebinding a button that's already in use swaps the two — every action always keeps a button") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(MappableAction.allCases, id: \.self) { action in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(action.label)
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text(action.subtitle)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.white.opacity(0.4))
+                            }
+                            Spacer()
+                            if store.captureTarget == action {
+                                Text("Press any button…")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Self.accent)
+                                Button("Cancel") { store.endCapture() }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.6))
+                            } else {
+                                Text(store.button(for: action).label)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.12)))
+                                Button("Rebind") { store.beginCapture(for: action) }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Self.accent)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Couch Mode section (kiosk-style setups: Mac mini under the TV)
+
+    // The full recipe (with macOS auto-login, controller pairing, and TV output) lives in the
+    // README's "Couch Mode" section — these two switches are the app-side half of it. Both are
+    // also rows in the in-app pause menu, so they're settable from the couch itself.
+    private var couchModeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Couch Mode")
+
+            ToggleRow(icon: "power", iconColor: .green,
+                      title: "Launch at Login",
+                      subtitle: "Registers Marquee as a login item (System Settings shows it too)",
+                      isOn: Binding(get: { appState.launchAtLogin },
+                                     set: { appState.setLaunchAtLogin($0) }))
+
+            ToggleRow(icon: "sunrise.fill", iconColor: .orange,
+                      title: "Start in Full Screen",
+                      subtitle: "Open straight into full screen — no keyboard needed",
+                      isOn: Binding(get: { appState.startInFullScreen },
+                                     set: { appState.setStartInFullScreen($0) }))
         }
     }
 

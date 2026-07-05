@@ -1,6 +1,7 @@
 import Foundation
 import Observation
-import AppKit   // NSImage (banner re-fetch validation)
+import AppKit   // NSImage (banner re-fetch validation), NSOpenPanel (custom library adds)
+import UniformTypeIdentifiers
 
 enum ArtSourcePreference {
     case notConfigured, own, automatic, steamGridDB
@@ -22,12 +23,22 @@ enum InputMethod: Equatable { case keyboard, mouse, controller }
 // for keyboard and controller.
 enum ControllerAction {
     case none, confirm, back
+    // Fired when the button mapped to `.confirm` is RELEASED (every other action only ever
+    // fires on press — this is the one exception, needed so a PLAY hold-to-confirm in progress
+    // can be cancelled if the button is let go before it completes). See decisions.md #96.
+    case confirmReleased
     case navLeft, navRight, navUp, navDown
     // Shoulder buttons (L1/R1) — previous/next game while the Detail page is open, mirroring
-    // the on-screen edge arrows and Cmd+Left/Right on the keyboard.
+    // the on-screen edge arrows and Cmd+Left/Right on the keyboard; on any library view page
+    // (carousel/grid/wall/list) they instead cycle View Mode, so browsing between layouts
+    // doesn't need a controller trip up to the top bar. See decisions.md #89.
     case pageLeft, pageRight
-    // Menu/Start button — toggle full screen, mirroring ⌥⏎/⌃⌘F and the top-bar button.
-    case toggleFullScreen
+    // Triggers (L2/R2) — cycle the source filter chips (All/CrossOver/Steam/…) on a library
+    // view page. Unused elsewhere (Detail has no filter concept).
+    case filterLeft, filterRight
+    // Menu/Start button — open/close the pause menu, the same console convention as a PS/Xbox
+    // home overlay. Full screen is a row inside the pause menu (and still ⌥⏎/⌃⌘F on keyboard).
+    case pauseMenu
 }
 
 @Observable
@@ -107,7 +118,22 @@ final class AppState {
     // (checked in ContentView.startup, after this initial read). Not `lazy` — see sourceFilter.
     var viewMode: ViewMode = {
         ViewMode(rawValue: UserDefaults.standard.string(forKey: "startupViewMode") ?? "") ?? .carousel
-    }()
+    }() {
+        didSet {
+            // Switching view mode while the Detail page is open used to leave Detail floating
+            // over the newly-selected mode underneath it — every viewMode mutation (nav bar,
+            // menu bar, pause menu cycler, controller L1/R1) previously left detailTarget alone.
+            // This is the one choke point all of those funnel through, so clearing it here (with
+            // no animation — a mode switch should read as instant, not a Back-style fade) covers
+            // every call site at once.
+            if detailTarget != nil { detailTarget = nil }
+        }
+    }
+    // Full-screen pause menu overlay (console-style) — every menu-bar action is reachable from
+    // it, so a keyboardless/fullscreen "couch" setup never needs the macOS menu bar. Runtime
+    // only, never persisted. Opened by Esc at the top level, a controller's Menu/Start button,
+    // or the nav bar's gear button.
+    var pauseMenuVisible: Bool = false
     var fixCoverTarget: Game? = nil
     var fixBannerTarget: Game? = nil    // non-nil opens the Fix Banner Art panel (list view)
     var detailTarget: Game? = nil       // non-nil shows the full-screen Detail page
@@ -124,6 +150,57 @@ final class AppState {
     // Fire-once command bridge from ContentView's key/controller router to DetailView's
     // TrailerPlayer (mirrors ControllerAction) — consumed then reset to .none.
     var trailerCommand: TrailerCommand = .none
+
+    // MARK: - PLAY hold-to-confirm (decisions.md #96)
+    //
+    // Jack's report: it's easy to accidentally launch a game, since the same confirm gesture
+    // (Enter/Space, controller A, or a click) means different things depending on where it
+    // lands — opening the modal Detail page vs. launching outright — and List's row-browsing
+    // Enter shortcut launches with zero confirmation at all. Every PLAY-shaped trigger (Detail's
+    // action-bar button, List's inline Play button, List's row-Enter shortcut) now funnels
+    // through here instead of firing the launch immediately: the caller must hold for
+    // `playHoldDuration` before `onComplete` actually runs. One shared implementation means
+    // mouse (a plain DragGesture(minimumDistance: 0), released early = cancelled), keyboard
+    // (key-down starts it, key-up before completion cancels), and controller (button-down/up,
+    // same shape) all get identical timing and the identical visual (a progress trace around
+    // the button that "completes the circuit" only at 100%).
+    static let playHoldDuration: TimeInterval = 1.5
+    var playHoldProgress: Double = 0
+    private(set) var playHoldTargetID: UUID?
+    private var playHoldTask: Task<Void, Never>?
+
+    func beginPlayHold(_ game: Game, onComplete: @escaping () -> Void) {
+        guard playHoldTargetID != game.id else { return }   // already holding this exact game
+        playHoldTask?.cancel()
+        let targetID = game.id
+        playHoldTargetID = targetID
+        playHoldProgress = 0
+        playHoldTask = Task { [weak self] in
+            let start = Date()
+            while !Task.isCancelled {
+                guard let self else { return }
+                let elapsed = Date().timeIntervalSince(start)
+                let progress = min(1, elapsed / AppState.playHoldDuration)
+                self.playHoldProgress = progress
+                if progress >= 1 { break }
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+            guard !Task.isCancelled, let self, self.playHoldTargetID == targetID else { return }
+            self.playHoldTargetID = nil
+            self.playHoldProgress = 0
+            onComplete()
+        }
+    }
+
+    // Released early (mouse up, key up, controller button up) before the hold completed.
+    func cancelPlayHold(_ game: Game? = nil) {
+        if let game, playHoldTargetID != game.id { return }   // not the one currently held
+        playHoldTask?.cancel()
+        playHoldTask = nil
+        playHoldTargetID = nil
+        playHoldProgress = 0
+    }
+
     var controllerAction: ControllerAction = .none
     var lastInputMethod: InputMethod = .keyboard
     // Tile under the mouse in grid/wall/list views (nil = not hovering). Drives the
@@ -251,6 +328,206 @@ final class AppState {
         UserDefaults.standard.set(enabled, forKey: "soundEffectsEnabled")
     }
 
+    // MARK: - Couch mode (kiosk-style setups: Mac mini under the TV, controller only)
+
+    // Open straight into faux full screen on launch — combined with "Launch at Login" (below)
+    // and macOS auto-login, Marquee boots into a console-style couch player with no keyboard
+    // or mouse ever needed. Applied by AppDelegate right after the window is configured.
+    var startInFullScreen: Bool = UserDefaults.standard.bool(forKey: "startInFullScreen")
+
+    func setStartInFullScreen(_ enabled: Bool) {
+        startInFullScreen = enabled
+        UserDefaults.standard.set(enabled, forKey: "startInFullScreen")
+    }
+
+    // Registered as a login item via SMAppService (System Settings ▸ General ▸ Login Items shows
+    // it as "Marquee"). The stored property mirrors the system's own status so the toggle
+    // re-renders; setLaunchAtLogin re-reads the real status after the change in case the system
+    // refused it (the OS, not us, owns this switch — it can also be flipped in System Settings).
+    var launchAtLogin: Bool = LoginItem.isEnabled
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        LoginItem.setEnabled(enabled)
+        launchAtLogin = LoginItem.isEnabled
+    }
+
+    // Re-read the system's answer — the user can flip this in System Settings ▸ Login Items at
+    // any time, which our stored mirror can't observe. Called when the pause menu opens and when
+    // the Preferences window appears, the two places the toggle is shown.
+    func refreshLaunchAtLogin() {
+        launchAtLogin = LoginItem.isEnabled
+    }
+
+    // MARK: - Toast (transient confirmation banner)
+
+    // One-line feedback for actions with no other visible acknowledgement — drag & drop adds
+    // in particular ("did that do anything?"). Auto-clears; a newer toast replaces the old.
+    var toastMessage: String? = nil
+    private var toastClearTask: Task<Void, Never>? = nil
+
+    func showToast(_ message: String) {
+        toastClearTask?.cancel()
+        toastMessage = message
+        toastClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            guard !Task.isCancelled else { return }
+            self?.toastMessage = nil
+        }
+    }
+
+    // MARK: - Custom library (user scan folders + individually added games)
+
+    // Version bump so SettingsView's management lists re-render — the underlying lists live
+    // in UserDefaults via CustomSource, which Observation can't see.
+    var customLibraryVersion: Int = 0
+
+    // Dropped/picked file → the right kind of custom entry. Folders become scan locations;
+    // .app bundles and Windows .exes become single games. Anything else is politely refused.
+    func addDroppedItem(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        if path.hasSuffix(".app") || path.lowercased().hasSuffix(".exe") {
+            addCustomGame(at: url)
+        } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            addCustomScanFolder(url)
+        } else {
+            showToast("Drop a Mac app, a Windows .exe, or a folder of games")
+        }
+    }
+
+    func addCustomGame(at url: URL) {
+        let entry: CustomGameEntry
+        if url.path.lowercased().hasSuffix(".exe") {
+            guard let bottle = CustomSource.defaultBottle() else {
+                showToast("Windows games need CrossOver — no bottles found")
+                return
+            }
+            entry = CustomGameEntry(path: url.standardizedFileURL.path, bottle: bottle)
+        } else {
+            entry = CustomGameEntry(path: url.standardizedFileURL.path, bottle: nil)
+        }
+        guard CustomSource.addGameEntry(entry) else {
+            showToast("Already in your library")
+            return
+        }
+        customLibraryVersion += 1
+        let title = url.deletingPathExtension().lastPathComponent
+        showToast("Added “\(CustomSource.prettyTitle(from: title))”")
+        Task {
+            await loadAllGames()
+            revealGame(withPath: entry.path)
+        }
+    }
+
+    func addCustomScanFolder(_ url: URL) {
+        guard CustomSource.addScanFolder(url) else {
+            showToast("Already scanning that folder")
+            return
+        }
+        customLibraryVersion += 1
+        showToast("Scanning “\(url.lastPathComponent)” for games")
+        Task { await loadAllGames() }
+    }
+
+    func removeCustomGame(_ entry: CustomGameEntry) {
+        CustomSource.removeGameEntry(entry)
+        customLibraryVersion += 1
+        Task { await loadAllGames() }
+    }
+
+    // The path a custom-added game entry would be stored under, if this game came from one.
+    // Custom entries reuse the built-in .applications/.crossOver source cases (see CustomSource.swift)
+    // rather than a dedicated GameSource case, so membership has to be checked by path.
+    private func customEntryPath(for game: Game) -> String? {
+        switch game.source {
+        case .applications(let url): return url.path
+        case .crossOver(_, let exePath): return exePath.isEmpty ? nil : exePath
+        default: return nil
+        }
+    }
+
+    // True only for games added individually via drag-and-drop / Library ▸ Add Game… — not
+    // for games found by a scan folder or any of the built-in scanners, which have no concept
+    // of a single-item removal (see item 0, 2026-07-05: users need a real way to get rid of a
+    // dropped non-game app like Plex, not just hide it from view).
+    func isCustomLibraryGame(_ game: Game) -> Bool {
+        guard let path = customEntryPath(for: game) else { return false }
+        return CustomSource.gameEntries.contains { $0.path == path }
+    }
+
+    // Fully removes a custom-added game from the library (unlike hideGame, which only filters
+    // it out of the visible list but leaves it in the scan + art-fetch loop).
+    func removeFromLibrary(_ game: Game) {
+        guard let path = customEntryPath(for: game),
+              let entry = CustomSource.gameEntries.first(where: { $0.path == path })
+        else { return }
+        if detailTarget?.id == game.id { detailTarget = nil }
+        showToast("Removed “\(game.title)” from your library")
+        removeCustomGame(entry)
+    }
+
+    func removeCustomScanFolder(_ path: String) {
+        CustomSource.removeScanFolder(path)
+        customLibraryVersion += 1
+        Task { await loadAllGames() }
+    }
+
+    func setCustomGameBottle(_ entry: CustomGameEntry, bottle: String) {
+        var updated = entry
+        updated.bottle = bottle
+        CustomSource.updateGameEntry(updated)
+        customLibraryVersion += 1
+        Task { await loadAllGames() }
+    }
+
+    // After a hot-add, walk the selection to the new game so the user sees it land.
+    // Deferred a beat: loadAllGames' gamesVersion bump makes ContentView reset selectedIndex
+    // to 0 on its next render pass — selecting synchronously here would lose that race.
+    private func revealGame(withPath path: String) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let self else { return }
+            // Visible under the current filter? Select it. Otherwise fall back to All first.
+            if self.indexOfGame(withPath: path) == nil { self.sourceFilter = .all }
+            if let idx = self.indexOfGame(withPath: path) { self.selectedIndex = idx }
+        }
+    }
+
+    private func indexOfGame(withPath path: String) -> Int? {
+        filteredGames.firstIndex { game in
+            switch game.source {
+            case .applications(let url):     return url.path == path
+            case .crossOver(_, let exePath): return exePath == path
+            default:                         return false
+            }
+        }
+    }
+
+    // MARK: - Add Game… / Add Folder to Scan… (Library menu)
+
+    func promptAddGame() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Game"
+        panel.message = "Choose a Mac app or a Windows .exe to add to your library"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.applicationBundle]
+        if let exe = UTType(filenameExtension: "exe") { types.append(exe) }
+        panel.allowedContentTypes = types
+        guard panel.runModal() == .OK else { return }
+        panel.urls.forEach { addCustomGame(at: $0) }
+    }
+
+    func promptAddScanFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Folder to Scan"
+        panel.message = "Marquee will look for games in this folder on every library refresh"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        panel.urls.forEach { addCustomScanFolder($0) }
+    }
+
     var artSourcePreference: ArtSourcePreference = {
         switch UserDefaults.standard.string(forKey: "artSourcePreference") ?? "" {
         case "own":         return .own
@@ -294,6 +571,7 @@ final class AppState {
         let ud = UserDefaults.standard
         ["appTheme", "motionEnabled", "heroBackgroundEnabled", "soundEffectsEnabled",
          "sortOption", "dateInstalledAscending", "startupViewMode", "startupSourceFilter",
+         "startInFullScreen",
         ].forEach { ud.removeObject(forKey: $0) }
         currentTheme = .outerspace
         motionEnabled = true
@@ -303,6 +581,9 @@ final class AppState {
         dateInstalledAscending = false
         startupViewMode = .carousel
         startupSourceFilter = .all
+        startInFullScreen = false
+        // Launch at Login is deliberately NOT reset — it's a system-level login item the user
+        // may have set up on purpose for a couch box; System Settings can always remove it.
     }
 
     // Clears play counts, last-played dates, and accumulated playtime. Kept separate (and
@@ -336,24 +617,43 @@ final class AppState {
         }
     }
 
+    // Order here drives the nav bar's left-to-right icon order, the pause menu's View cycler,
+    // and topBarFocusIdx math (ContentView+Input) — kept as a density spectrum (immersive 3D →
+    // dense table) so the icons themselves read as a progression, per Jack's ask (decisions.md
+    // #97): Carousel (one game, full 3D) → Big (~2 poster rows) → Grid (~3 rows) → Wall (~4
+    // rows) → List (master/detail, banner rows) → Compact List (master/detail, flat table rows).
     enum ViewMode: String, CaseIterable {
-        case carousel, grid, wall, list
+        // rainbowSlide sits right after carousel — the two are the "semi-similar" full-3D wheel
+        // modes (see RainbowSlideController), both distinct from the SwiftUI grid/list family.
+        case carousel, rainbowSlide, big, grid, wall, list, compactList
 
         var sfSymbol: String {
             switch self {
-            case .carousel: return "square.stack.3d.up.fill"
-            case .grid:     return "square.grid.2x2.fill"
-            case .wall:     return "square.grid.3x3.fill"
-            case .list:     return "list.bullet"
+            case .carousel:     return "square.stack.3d.up.fill"
+            // A literal "spinning 3D thing" glyph — distinct from Carousel's flat-stack icon,
+            // reads as depth/rotation at a glance.
+            case .rainbowSlide: return "rotate.3d"
+            // Two large stacked rectangles — reads as "a couple of big posters," distinct from
+            // Grid's evenly-divided 2×2 and Wall's dense 3×3.
+            case .big:          return "rectangle.grid.1x2.fill"
+            case .grid:         return "square.grid.2x2.fill"
+            case .wall:         return "square.grid.3x3.fill"
+            case .list:         return "list.bullet"
+            // A table glyph (distinct from List's plain bullet list) for the denser, columned row
+            // style — reads as "list" but visibly not the same list.
+            case .compactList:  return "list.bullet.rectangle"
             }
         }
 
         var label: String {
             switch self {
-            case .carousel: return "Carousel"
-            case .grid:     return "Grid"
-            case .wall:     return "Wall"
-            case .list:     return "List"
+            case .carousel:     return "Carousel"
+            case .rainbowSlide: return "Rainbow Slide"
+            case .big:          return "Big"
+            case .grid:         return "Grid"
+            case .wall:         return "Wall"
+            case .list:         return "List"
+            case .compactList:  return "Compact List"
             }
         }
     }
@@ -644,10 +944,24 @@ final class AppState {
         async let epic      = Task.detached { EpicSource.scan() }.value
         async let gog       = Task.detached { GOGSource.scan() }.value
         async let apps      = Task.detached { ApplicationsSource.scan() }.value
-        var all = await crossOver + steam + epic + gog + apps
+        async let custom    = Task.detached { CustomSource.scan() }.value
+        var all = await crossOver + steam + epic + gog + apps + custom
+        // Custom entries last + unique-by-id: a user scan folder that overlaps a built-in
+        // scanner's territory (say, /Applications itself) yields the identical stable UUID
+        // for the same bundle, so the built-in's richer result wins and nothing double-shows.
+        var seenIDs = Set<UUID>()
+        all = all.filter { seenIDs.insert($0.id).inserted }
         all.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
 
-        if all.isEmpty {
+        // Test hook: pretend every scanner came back empty, to exercise the empty-library
+        // state on a machine that has real games installed.
+        if ProcessInfo.processInfo.environment["MARQUEE_SIMULATE_EMPTY"] != nil { all = [] }
+
+        // An empty scan means an empty library — EmptyLibraryView tells the user where Marquee
+        // looked and how to refresh. (The old behavior fell back to the dev placeholder titles,
+        // which read as ten fake games a brand-new user doesn't own and can't launch.
+        // MARQUEE_PLACEHOLDERS=1 restores them for screenshots/dev work.)
+        if all.isEmpty && ProcessInfo.processInfo.environment["MARQUEE_PLACEHOLDERS"] != nil {
             loadPlaceholders()
         } else {
             games = all
@@ -655,15 +969,38 @@ final class AppState {
         stampDateAddedIfNeeded(for: games)
         gamesVersion += 1
 
-        // Fetch art serially in background; signals isReady when the loop finishes
+        // Fetch art serially in background; signals isReady when the loop finishes.
+        // Hidden games are skipped outright — a hidden non-game app (e.g. Plex, dropped in
+        // just to be couch-launchable) shouldn't keep getting matched against a game art
+        // database every refresh just because it's still in the library.
         Task {
-            for game in self.games {
+            for game in self.games where !self.hiddenGameIDs.contains(game.id) {
                 if let artURL = await ArtFetcher.shared.fetch(for: game) {
                     self.setLocalArtPath(artURL, forGameId: game.id)
                     self.artVersion += 1
                 }
             }
             self.isReady = true
+        }
+    }
+
+    // Fired when connectivity returns (NetworkMonitor.onReconnect, wired in MarqueeApp):
+    // re-fetches art for every game that has nothing in the permanent art cache — which is
+    // exactly the set that started up offline (ArtFetcher deliberately doesn't cache its
+    // offline bundled-icon fallback, so those games are indistinguishable from never-fetched
+    // ones by this criterion; user-placed and fixed art all live in the cache and are skipped).
+    private var artRetryInProgress = false
+
+    func retryMissingArt() async {
+        guard !artRetryInProgress else { return }
+        artRetryInProgress = true
+        defer { artRetryInProgress = false }
+        for game in games where !hiddenGameIDs.contains(game.id) {
+            guard await ArtCache.shared.cachedURL(for: game.id) == nil else { continue }
+            if let artURL = await ArtFetcher.shared.fetch(for: game) {
+                setLocalArtPath(artURL, forGameId: game.id)
+                artVersion += 1
+            }
         }
     }
 

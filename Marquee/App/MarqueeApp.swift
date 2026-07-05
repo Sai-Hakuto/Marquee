@@ -18,6 +18,13 @@ struct MarqueeApp: App {
     }
 
     var body: some Scene {
+        // NOTE (login-item no-window bug): on macOS 15+, a background/login launch may skip
+        // presenting the WindowGroup's default window entirely — the app runs windowless (music
+        // playing, nothing on any screen; observed live with NSApp.windows == []). Apple's switch
+        // for that is .defaultLaunchBehavior(.presented), but it's macOS 15-only and SceneBuilder
+        // can't branch on #available, so with a macOS 14 deployment target it can't be applied.
+        // AppDelegate.ensureMainWindowExists() is the runtime backstop instead: it detects the
+        // windowless state after launch and recovers via a self-sent reopen event.
         WindowGroup {
             ContentView()
                 .environment(delegate.appState)
@@ -32,6 +39,15 @@ struct MarqueeApp: App {
                     session.appDelegate = delegate
                     session.sound = soundEffects
                     session.appState = delegate.appState
+                    // Touching .shared starts the NWPathMonitor; on every offline→online
+                    // transition, fill in art that couldn't be fetched and drop detail lookups
+                    // that missed while offline so their next open fetches for real.
+                    NetworkMonitor.shared.onReconnect = { [weak delegate] in
+                        Task {
+                            await GameDetailsFetcher.shared.invalidateOfflineMisses()
+                            await delegate?.appState.retryMissingArt()
+                        }
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -55,12 +71,18 @@ struct MarqueeApp: App {
                 Section("Layout") {
                     Button("Carousel") { delegate.appState.viewMode = .carousel }
                         .keyboardShortcut("1", modifiers: .command)
-                    Button("Grid") { delegate.appState.viewMode = .grid }
+                    Button("Rainbow Slide") { delegate.appState.viewMode = .rainbowSlide }
                         .keyboardShortcut("2", modifiers: .command)
-                    Button("Wall") { delegate.appState.viewMode = .wall }
+                    Button("Big") { delegate.appState.viewMode = .big }
                         .keyboardShortcut("3", modifiers: .command)
-                    Button("List") { delegate.appState.viewMode = .list }
+                    Button("Grid") { delegate.appState.viewMode = .grid }
                         .keyboardShortcut("4", modifiers: .command)
+                    Button("Wall") { delegate.appState.viewMode = .wall }
+                        .keyboardShortcut("5", modifiers: .command)
+                    Button("List") { delegate.appState.viewMode = .list }
+                        .keyboardShortcut("6", modifiers: .command)
+                    Button("Compact List") { delegate.appState.viewMode = .compactList }
+                        .keyboardShortcut("7", modifiers: .command)
                 }
                 Divider()
                 Button("Toggle Full Screen") { delegate.toggleFullScreen() }
@@ -91,6 +113,12 @@ struct MarqueeApp: App {
                     Task { await delegate.appState.loadAllGames() }
                 }
                 .keyboardShortcut("r", modifiers: .command)
+                Divider()
+                // The menu-driven half of the custom library — drag & drop onto the window
+                // does the same thing without a file dialog.
+                Button("Add Game…") { delegate.appState.promptAddGame() }
+                    .keyboardShortcut("o", modifiers: .command)
+                Button("Add Folder to Scan…") { delegate.appState.promptAddScanFolder() }
             }
 
             CommandMenu("Game") {

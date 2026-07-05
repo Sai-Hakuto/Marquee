@@ -8,6 +8,11 @@ struct SceneKitView: NSViewRepresentable {
     var onLeftClick: ((SCNNode) -> Void)?
     var onScroll: ((Int) -> Void)?
     var onMouseInside: ((Bool) -> Void)?
+    // Continuous hover hit-test — Rainbow Slide's "whatever box the cursor is over gets the
+    // outline" needs a hit node on every mouse MOVE, not just clicks (nil = cursor over empty
+    // space/floor). The carousel doesn't set this, so MarqueeSCNView skips the extra per-move
+    // hit-testing entirely for it (see mouseMoved below).
+    var onMouseMove: ((SCNNode?) -> Void)?
     // Drives SCNView.isPlaying — see updateNSView. Defaults true so every existing call site
     // (Detail page's box, etc.) keeps rendering unless it opts in to the visibility gate.
     var isVisible: Bool = true
@@ -26,6 +31,7 @@ struct SceneKitView: NSViewRepresentable {
         view.onLeftClick   = context.coordinator.handleLeftClick
         view.onScroll      = context.coordinator.handleScroll
         view.onMouseInside = context.coordinator.handleMouseInside
+        view.onMouseMove   = context.coordinator.handleMouseMove
         return view
     }
 
@@ -34,6 +40,7 @@ struct SceneKitView: NSViewRepresentable {
         view.onLeftClick   = context.coordinator.handleLeftClick
         view.onScroll      = context.coordinator.handleScroll
         view.onMouseInside = context.coordinator.handleMouseInside
+        view.onMouseMove   = context.coordinator.handleMouseMove
         // rendersContinuously=false already means SceneKit only redraws on real scene changes,
         // not a fixed 60fps loop — but SCNFloor's live reflection pass and per-frame hit-test/
         // tracking-area bookkeeping still cost real CPU on every one of those redraws, and nothing
@@ -61,6 +68,7 @@ struct SceneKitView: NSViewRepresentable {
         func handleLeftClick(node: SCNNode) { parent.onLeftClick?(node) }
         func handleScroll(_ delta: Int) { parent.onScroll?(delta) }
         func handleMouseInside(_ inside: Bool) { parent.onMouseInside?(inside) }
+        func handleMouseMove(_ node: SCNNode?) { parent.onMouseMove?(node) }
     }
 }
 
@@ -71,6 +79,7 @@ final class MarqueeSCNView: SCNView {
     var onLeftClick: ((SCNNode) -> Void)?
     var onScroll: ((Int) -> Void)?
     var onMouseInside: ((Bool) -> Void)?
+    var onMouseMove: ((SCNNode?) -> Void)?
 
     private var scrollAccumulator: CGFloat = 0
     private let trackpadThreshold: CGFloat = 80   // 80 pt per step on trackpad
@@ -80,15 +89,25 @@ final class MarqueeSCNView: SCNView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }
+        // .mouseMoved is unconditional (not gated on onMouseMove being set) since tracking-area
+        // options can't be swapped per-frame — the mouseMoved override below is what actually
+        // skips the hit-test when nobody's listening (the carousel never sets onMouseMove).
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
             owner: self, userInfo: nil
         ))
     }
 
     override func mouseEntered(with event: NSEvent) { onMouseInside?(true) }
-    override func mouseExited(with event: NSEvent)  { onMouseInside?(false) }
+    override func mouseExited(with event: NSEvent)  { onMouseInside?(false); onMouseMove?(nil) }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard onMouseMove != nil else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let hits = hitTest(point, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue])
+        onMouseMove?(hits.first?.node)
+    }
 
     override func rightMouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
@@ -118,11 +137,24 @@ final class MarqueeSCNView: SCNView {
             while scrollAccumulator >=  trackpadThreshold { scrollAccumulator -= trackpadThreshold; onScroll?(-1) }
             while scrollAccumulator <= -trackpadThreshold { scrollAccumulator += trackpadThreshold; onScroll?(+1) }
         } else {
-            // Physical mouse scroll wheel: vertical delta maps to left/right nav.
-            // dy > 0 = wheel up = previous game; dy < 0 = wheel down = next game.
+            // Physical mouse scroll wheel: vertical delta maps to left/right nav, one step per
+            // notch — no momentum/coast (removed per Jack's ask, decisions.md #101 reverted).
+            // A full-magnitude notch (the normal case) still fires immediately, exactly once,
+            // regardless of how large dy is — unchanged from before. Some mice (and a low
+            // system "scroll speed" setting) emit FRACTIONAL deltas under 1.0 when the wheel is
+            // turned slowly, which the old code silently dropped every single time with no
+            // accumulation — "scrolling too slow does nothing at all." Only that sub-threshold
+            // remainder gets accumulated (mirroring the trackpad accumulator above), so slow
+            // notches still add up to a step instead of vanishing.
             let dy = event.scrollingDeltaY
-            guard abs(dy) >= 1.0 else { return }
-            onScroll?(dy > 0 ? -1 : +1)
+            guard dy != 0 else { return }
+            if abs(dy) >= 1.0 {
+                onScroll?(dy > 0 ? -1 : +1)
+            } else {
+                scrollAccumulator += dy
+                if scrollAccumulator >= 1.0 { scrollAccumulator -= 1.0; onScroll?(-1) }
+                else if scrollAccumulator <= -1.0 { scrollAccumulator += 1.0; onScroll?(+1) }
+            }
         }
 
         if event.momentumPhase == .ended || event.momentumPhase == .cancelled {

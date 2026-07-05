@@ -107,18 +107,11 @@ struct SourceBadge: View {
     // installed INSIDE a bottle, a "CrossOver" game is frequently
     // also a Steam game under the hood, and the pill alone hides that. Purely cosmetic:
     // `GameMetadata.viaLauncher` is read ONLY here, never by filtering/launch/identity.
-    private var peekingBrand: (glyph: String, color: Color)? {
+    private var peekingBrandColor: Color? {
         guard case .crossOver = game.source, game.metadata.viaLauncher == "steam" else { return nil }
-        return ("S", Color(red: 0.11, green: 0.49, blue: 0.82))  // same blue as .steam's sourceBadgeColor
+        return Color(red: 0.11, green: 0.49, blue: 0.82)  // same blue as .steam's sourceBadgeColor
     }
     private var peekDiameter: CGFloat { switch size { case .regular: 15; case .compact: 12; case .mini: 10 } }
-    private var peekFont: Font {
-        switch size {
-        case .regular: return .system(size: 8, weight: .heavy)
-        case .compact: return .system(size: 7, weight: .heavy)
-        case .mini:    return .system(size: 6, weight: .heavy)
-        }
-    }
     private var peekOffsetX: CGFloat { switch size { case .regular: 9; case .compact: 7; case .mini: 6 } }
 
     var body: some View {
@@ -134,16 +127,14 @@ struct SourceBadge: View {
 
         // Drawn via .background (not .overlay) so the opaque pill paints OVER most of the
         // circle — only the offset sliver past the trailing edge is visible, reading as "peeking
-        // out from behind" rather than a badge stuck on top. The rotation tilts the "S" glyph
-        // itself (a plain circle wouldn't visibly read as angled) for a "peeking around a
-        // corner" look.
-        if let peek = peekingBrand {
+        // out from behind" rather than a badge stuck on top. The rotation tilts the glyph itself
+        // (a plain circle wouldn't visibly read as angled) for a "peeking around a corner" look.
+        if let color = peekingBrandColor {
             pill.background(alignment: .trailing) {
-                Text(peek.glyph)
-                    .font(peekFont)
-                    .foregroundStyle(.white)
+                SteamGlyph()
+                    .frame(width: peekDiameter * 0.62, height: peekDiameter * 0.62)
                     .frame(width: peekDiameter, height: peekDiameter)
-                    .background(Circle().fill(peek.color))
+                    .background(Circle().fill(color))
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.3), lineWidth: 0.5))
                     .shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
                     .rotationEffect(.degrees(16))
@@ -151,6 +142,35 @@ struct SourceBadge: View {
             }
         } else {
             pill
+        }
+    }
+}
+
+// A simplified, recognizable rendition of Steam's own mark (the outer ring + two "pearls"
+// joined by a swoosh) — replaces the plain "S" letter the peeking badge used to show, so it
+// reads as Steam's actual icon rather than an abbreviation, even at SourceBadge's smallest
+// (10pt) size. Drawn as vector shapes (not a bundled bitmap) so it stays crisp at any size and
+// needs no new asset/bundling step.
+private struct SteamGlyph: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width, h = size.height
+            let lineW = w * 0.11
+
+            var ring = Path()
+            ring.addEllipse(in: CGRect(x: w * 0.06, y: h * 0.06, width: w * 0.88, height: h * 0.88))
+            ctx.stroke(ring, with: .color(.white), lineWidth: lineW)
+
+            var swoosh = Path()
+            swoosh.move(to: CGPoint(x: w * 0.30, y: h * 0.74))
+            swoosh.addQuadCurve(to: CGPoint(x: w * 0.72, y: h * 0.30),
+                                 control: CGPoint(x: w * 0.28, y: h * 0.28))
+            ctx.stroke(swoosh, with: .color(.white), lineWidth: lineW * 0.85)
+
+            ctx.fill(Path(ellipseIn: CGRect(x: w * 0.18, y: h * 0.58, width: w * 0.28, height: h * 0.28)),
+                     with: .color(.white))
+            ctx.fill(Path(ellipseIn: CGRect(x: w * 0.56, y: h * 0.18, width: w * 0.22, height: h * 0.22)),
+                     with: .color(.white))
         }
     }
 }
@@ -196,6 +216,12 @@ struct GameContextMenu: View {
         } label: {
             Label(isHidden ? "Unhide Game" : "Hide Game",
                   systemImage: isHidden ? "eye" : "eye.slash")
+        }
+
+        if appState.isCustomLibraryGame(game) {
+            Button(role: .destructive) {
+                appState.removeFromLibrary(game)
+            } label: { Label("Remove from Library…", systemImage: "trash") }
         }
     }
 }

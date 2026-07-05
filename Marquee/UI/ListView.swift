@@ -340,7 +340,8 @@ private struct ListDetailPanel: View {
     // The Detail-page actions, surfaced inline on the list row's panel.
     private func actions(for game: Game) -> some View {
         HStack(spacing: 12) {
-            Button { session.launch(game) } label: {
+            // Hold-to-confirm (decisions.md #96) — same gate as every other PLAY trigger.
+            PlayHoldButton(game: game, cornerRadius: 13, onComplete: { session.launch(game) }) {
                 HStack(spacing: 10) {
                     Image(systemName: "play.fill").font(.system(size: 16, weight: .bold))
                     Text("PLAY").font(.system(size: 17, weight: .heavy)).tracking(1)
@@ -361,7 +362,6 @@ private struct ListDetailPanel: View {
                         .strokeBorder(actionsFocused && actionFocusIdx == 0 ? Color.white.opacity(0.9) : .clear, lineWidth: 2.5)
                 )
             }
-            .buttonStyle(.plain)
             .hoverHighlight(scale: 1.03, brighten: 0.08)
             .inputHint(actionsFocused && actionFocusIdx == 0 ? .confirm : nil, method: appState.lastInputMethod)
 

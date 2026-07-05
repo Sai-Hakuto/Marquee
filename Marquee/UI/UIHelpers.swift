@@ -23,6 +23,61 @@ struct FilterChipStyle: ButtonStyle {
     }
 }
 
+// MARK: - PLAY hold-to-confirm (decisions.md #96)
+//
+// Traces a border stroke around a PLAY-shaped button as AppState.playHoldProgress climbs from
+// 0 to 1 over the hold duration, starting from the shape's own path origin and sweeping all the
+// way around — it only forms a fully closed loop ("connects to the other side") right as the
+// hold completes, matching Jack's own description of the desired feel.
+struct PlayHoldOutline: View {
+    let progress: Double
+    let cornerRadius: CGFloat
+    var color: Color = .white
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .trim(from: 0, to: progress)
+            .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+            .shadow(color: color.opacity(0.8), radius: progress > 0.02 ? 5 : 0)
+            .allowsHitTesting(false)
+    }
+}
+
+// A drop-in replacement for `Button { session.launch(game) } label: { ... }` on every
+// PLAY-shaped control — launching now requires holding for `AppState.playHoldDuration` instead
+// of firing on a single click/key/button press (Jack's report: it's too easy to accidentally
+// launch a game). Built on `DragGesture(minimumDistance: 0)` rather than `Button` because a
+// `Button`'s action fires on release regardless of how long it was held — there's no way to
+// make it require a duration. `onChanged` (fires continuously while pressed) starts the hold
+// exactly once (`AppState.beginPlayHold` is idempotent per-game); `onEnded` (release) cancels it
+// if it hasn't completed. `cornerRadius` must match the caller's own `.clipShape`/`.background`
+// corner radius so the hold-progress outline traces the button's actual edge. Keyboard/
+// controller confirm on a focused PLAY control does NOT go through this view at all — those
+// route through the identical `AppState.beginPlayHold`/`cancelPlayHold` pair directly from
+// ContentView's key/controller router, so all three input methods share one implementation and
+// one clock, just reached from different gesture recognizers.
+struct PlayHoldButton<Label: View>: View {
+    let game: Game
+    let cornerRadius: CGFloat
+    let onComplete: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let isHeld = appState.playHoldTargetID == game.id
+        label()
+            .overlay(PlayHoldOutline(progress: isHeld ? appState.playHoldProgress : 0,
+                                      cornerRadius: cornerRadius))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in appState.beginPlayHold(game, onComplete: onComplete) }
+                    .onEnded { _ in appState.cancelPlayHold(game) }
+            )
+    }
+}
+
 // MARK: - Helpers
 
 extension Array {

@@ -26,6 +26,9 @@ Games on a Mac end up scattered across half a dozen launchers: native titles in 
 - **The details page** — screenshots, a trailer with eShop-style playback controls, file size, install location, and metadata pulled from Steam's public store data.
 - **Background music with a visualizer** — a bundled soundtrack player with an FFT visualizer, per-track shuffle weights, and volume that ducks for trailers and game sessions.
 - **Favorites, hiding, themes** — pin favorites to the front, hide the clutter, and pick your backdrop.
+- **A console-style pause menu** — press Esc (or a controller's Menu button, or the gear in the nav bar) for a PlayStation-style overlay with every setting and action in the app: view, filter, sort, full screen, themes, volume, refresh, quit. The menu bar is never required — full screen with only a controller in hand is a first-class way to live.
+- **Couch mode** — flip on *Launch at Login* and *Start in Full Screen* (in the pause menu or Settings) and a Mac mini under the TV boots straight into your library like a console.
+- **Works offline** — no internet? Cached art still shows, your library is fully browsable, and installed games launch. Marquee quietly marks itself OFFLINE, skips the network instead of hanging on it, and fills in missing art automatically the moment you're back online.
 
 | | | |
 |---|---|---|
@@ -45,6 +48,33 @@ make run     # builds Marquee.app and opens it
 Other targets: `make app` (build only), `make clean`.
 
 On first launch, Marquee walks you through a short setup: what it is, exactly what it touches on your system, and how you'd like cover art to be found. Everything is changeable later in **Settings (⌘,)** — including granular reset buttons if you ever want to re-run the welcome flow or start fresh.
+
+**Downloaded a pre-built `Marquee.app` instead of building it?** macOS quarantines apps from the internet that aren't notarized through Apple, so the first open may say the app "is damaged" or "can't be checked for malicious software." Either **right-click → Open → Open** (once; normal double-click works forever after), or clear the quarantine flag yourself:
+
+```bash
+xattr -cr /path/to/Marquee.app
+```
+
+Building from source (above) never hits this.
+
+## Couch mode: a Mac mini as a game console
+
+Marquee is built to run keyboard-free on a Mac plugged into a TV:
+
+1. **Pair a controller** — System Settings → Bluetooth. Xbox, PlayStation, and MFi controllers all work; the sticks, d-pad, face buttons, and shoulders drive the whole UI.
+2. In Marquee, open the **pause menu** (controller **Menu/Start** button, or Esc) and flip on **Start in Full Screen** and **Launch at Login**.
+3. **Let the Mac log itself in** — System Settings → Users & Groups → *Automatically log in as…*. (macOS disables this option while FileVault is on.)
+4. That's it. Power on the Mac and it lands in your fullscreen library; every setting stays reachable from the pause menu, and PLAY gets out of the way while a game runs.
+
+## Playing on a TV or Apple TV
+
+The Mac renders the games, so the goal is getting the Mac's picture onto the TV:
+
+- **HDMI (best)** — plug the Mac into the TV, set the TV as the display, done. Lowest latency, full quality; this is the couch-mode setup above.
+- **Apple TV as a second display** — Control Center → Screen Mirroring → your Apple TV → *Use As Separate Display*. Then in Marquee's pause menu use **Move to Next Display** and **Full Screen** to send the library to the TV. Set the TV as the sound output in System Settings → Sound. Note that AirPlay adds real latency — great for slower games, rough for anything twitchy.
+- **Apple TV mirroring** — the same Screen Mirroring menu, but mirroring the whole screen. Use this when the *game* needs to be on the TV too: games are separate apps, so mirroring just Marquee's window would leave the game behind on the Mac. Mirror the full display and everything follows.
+
+A note on expectations: macOS can only AirPlay a *display* (mirrored or extended), not "cast" an individual app the way a video player casts a movie — so full-screen mirroring, an extended display, or a cable are the three real options.
 
 ## Where games come from
 

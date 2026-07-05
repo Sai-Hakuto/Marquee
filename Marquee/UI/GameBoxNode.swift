@@ -9,6 +9,10 @@ final class GameBoxNode: SCNNode {
     private let boxNode = SCNNode()
     private let depth: CGFloat
     private let spineTitle: Bool
+    // Carousel boxes round their art corners to read as a "card," matching Grid/Wall's rounded
+    // tiles (see decisions.md #88); the Detail/List 3D case box deliberately keeps hard corners —
+    // it's selling the illusion of a real physical game case, which doesn't have rounded corners.
+    private let roundedCorners: Bool
     // Rounded-corner fill for the front face art (set from spineColor in setupBox before the
     // front material is built) — reused by applyArt() so real cover art gets the same treatment.
     private var cornerFillColor: NSColor = .black
@@ -16,14 +20,15 @@ final class GameBoxNode: SCNNode {
     // 2:3 cover art proportions (matches 600×900 Steam/SteamGridDB portrait art)
     static let boxWidth:  CGFloat = 2.8    // 2:3 ratio with height — matches 600×900 cover art
     static let boxHeight: CGFloat = 4.2
-    static let boxDepth:  CGFloat = 0.14
+    static let boxDepth:  CGFloat = 0.22
 
     // `depth` thickens the case for the Detail page (a chunky game-case look with a
     // readable spine); `spineTitle` draws the title vertically on the left/right faces.
-    init(game: Game, depth: CGFloat = GameBoxNode.boxDepth, spineTitle: Bool = false) {
+    init(game: Game, depth: CGFloat = GameBoxNode.boxDepth, spineTitle: Bool = false, roundedCorners: Bool = false) {
         self.game = game
         self.depth = depth
         self.spineTitle = spineTitle
+        self.roundedCorners = roundedCorners
         super.init()
         setupBox()
     }
@@ -31,12 +36,25 @@ final class GameBoxNode: SCNNode {
     required init?(coder: NSCoder) { nil }
 
     private func setupBox() {
+        // SCNBox chamferRadius rounds the box's actual silhouette, not just its face texture —
+        // capped at half the thinnest dimension (always `depth` here). Without this, the front-
+        // face art's rounded-corner mask (see roundedCorners(_:fill:) below) sits inside a still-
+        // perfectly-square box outline, so from a few feet away it just reads as sharp — the
+        // mask alone was the v0.16.0 fix, this is what actually makes the corner LOOK rounded.
+        let chamfer = roundedCorners ? GameBoxNode.cornerRadiusUnits : 0.006
         let box = SCNBox(
             width: GameBoxNode.boxWidth,
             height: GameBoxNode.boxHeight,
             length: depth,
-            chamferRadius: 0.006
+            chamferRadius: chamfer
         )
+        // SceneKit's default chamfer tessellation is coarse enough to read as a single flat
+        // bevel facet rather than a curve at this radius (confirmed via a pixel-cropped
+        // screenshot — a dead-straight diagonal line, not an arc) — while the ring/mask corner
+        // is a rasterized circular arc. Matching the RADIUS alone (above) wasn't enough; the
+        // chamfer's actual SHAPE needs enough segments to read as round too, or the two still
+        // visibly disagree despite sharing a radius.
+        if roundedCorners { box.chamferSegmentCount = 24 }
 
         let (r, g, b) = game.sourceBadgeColor
         let baseColor = NSColor(red: r * 0.5, green: g * 0.5, blue: b * 0.5, alpha: 1.0)
@@ -108,7 +126,10 @@ final class GameBoxNode: SCNNode {
 
     private func makeFrontMaterial(baseColor: NSColor) -> SCNMaterial {
         let mat = SCNMaterial()
-        mat.diffuse.contents = GameBoxNode.roundedCorners(placeholderImage(color: baseColor), fill: cornerFillColor)
+        let placeholder = placeholderImage(color: baseColor)
+        mat.diffuse.contents = roundedCorners
+            ? GameBoxNode.roundedCornerMask(placeholder, fill: cornerFillColor)
+            : placeholder
         mat.specular.contents = NSColor(white: 0.3, alpha: 1.0)
         mat.shininess = 0.25
         mat.lightingModel = .phong
@@ -185,6 +206,20 @@ final class GameBoxNode: SCNNode {
         return img
     }
 
+    // Rainbow Slide's counterpart to setSelected — no ring plane, and (v0.33.0, decisions.md #111)
+    // no tint either: Jack's ask was to drop the purple wash-over-the-art entirely and keep only
+    // the pop/grow (RainbowSlideController's ringPopScale/ringPopZ) as the sole selection signal —
+    // a same-material emission tint on the box's own OPAQUE surface, unlike setSelected's ring,
+    // multiplies over the ENTIRE face (there's no separate plane to confine it to just an edge
+    // glow), so it read as the whole cover being dyed purple rather than a selection indicator.
+    // Kept as a no-op entry point (rather than deleting the call sites) in case a future pass
+    // wants a subtler indicator here that isn't a flat color wash.
+    func setHighlightTint(_ highlighted: Bool = false) {
+        guard let mat = boxNode.geometry?.materials.first else { return }
+        _ = highlighted
+        mat.emission.contents = NSColor.black
+    }
+
     func setSelected(_ selected: Bool) {
         guard let mat = boxNode.geometry?.materials.first else { return }
         mat.emission.contents = selected
@@ -240,15 +275,25 @@ final class GameBoxNode: SCNNode {
     private static let ringInnerW: CGFloat = 320
     private static let ringInnerH: CGFloat = 480
     private static let ringMargin: CGFloat = 56
-    private static let ringCornerRadiusPx: CGFloat = 18
     private static let ringPxPerUnit: CGFloat = ringInnerW / GameBoxNode.boxWidth
     static var ringPlaneW: CGFloat { (ringInnerW + ringMargin * 2) / ringPxPerUnit }
     static var ringPlaneH: CGFloat { (ringInnerH + ringMargin * 2) / ringPxPerUnit }
 
-    // Same corner radius as the selection ring, expressed as a fraction of the box face width
-    // so it applies correctly to art images of any resolution (all 2:3 portrait, like the box
-    // face itself) — keeps the poster's own corners from ever peeking past the rounded ring.
-    private static let frontCornerRadiusFraction: CGFloat = ringCornerRadiusPx / ringInnerW
+    // The box's real geometric chamfer (setupBox, capped at half the box's thinnest dimension
+    // per SCNBox's own rule) is the single source of truth for "how rounded a corner reads" —
+    // the ring texture and the front-face art mask both derive their own corner radius from
+    // THIS value (converted into their own pixel spaces) instead of each picking an independent
+    // one. Before this fix the ring/mask used a fixed 18px-on-a-320px-canvas radius (0.1575
+    // scene units) while the real chamfer capped out at ~0.10 (depth/2 * 0.92) — the flat
+    // overlays rounded the corner well before the box's actual 3D edge did, so the art's
+    // square-ish silhouette visibly poked out past the ring's more-rounded corner.
+    static let cornerRadiusUnits: CGFloat = boxDepth / 2 * 0.92
+    private static let ringCornerRadiusPx: CGFloat = cornerRadiusUnits * ringPxPerUnit
+
+    // Same corner radius as the selection ring/chamfer, expressed as a fraction of the box face
+    // width so it applies correctly to art images of any resolution (all 2:3 portrait, like the
+    // box face itself) — keeps the poster's own corners from ever peeking past the ring/chamfer.
+    private static let frontCornerRadiusFraction: CGFloat = cornerRadiusUnits / boxWidth
 
     // Bakes an opaque fill color under the rounded-off corners rather than cutting them
     // genuinely transparent. A real alpha cutout (`transparencyMode = .aOne` + actual alpha < 1
@@ -269,7 +314,7 @@ final class GameBoxNode: SCNNode {
     // solid fill color instead of art (only visible on the large, close-to-camera carousel
     // boxes). Pixel-exact sizing sidesteps whatever DPI/rounding step in SceneKit's texture
     // upload was choking on the fractional canvas.
-    private static func roundedCorners(_ image: NSImage, fill: NSColor) -> NSImage {
+    private static func roundedCornerMask(_ image: NSImage, fill: NSColor) -> NSImage {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return image
         }
@@ -354,6 +399,8 @@ final class GameBoxNode: SCNNode {
 
     func applyArt(_ image: NSImage) {
         guard let mat = boxNode.geometry?.materials.first else { return }
-        mat.diffuse.contents = GameBoxNode.roundedCorners(image, fill: cornerFillColor)
+        mat.diffuse.contents = roundedCorners
+            ? GameBoxNode.roundedCornerMask(image, fill: cornerFillColor)
+            : image
     }
 }

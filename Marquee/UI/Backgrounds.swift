@@ -249,7 +249,10 @@ struct HeroBackground: View {
             }
         }
         .ignoresSafeArea()
-        .task(id: game?.id) {
+        // Keyed on connectivity too: fetchHero returns nil offline (theme backdrop only), so a
+        // reconnect must retry the CURRENT selection — the id-only key would otherwise leave it
+        // hero-less until the user happens to move.
+        .task(id: "\(game?.id.uuidString ?? "-")/\(NetworkMonitor.shared.isOnline)") {
             guard let game else { withAnimation(.easeInOut(duration: 0.5)) { image = nil }; return }
             let url = await ArtFetcher.shared.fetchHero(for: game)
             let loaded = url.flatMap { NSImage(contentsOf: $0) }

@@ -22,6 +22,12 @@ app: debug
 	@mkdir -p $(RESOURCES_DIR)
 	@cp $(BUILD_DIR)/$(APP_NAME) $(MACOS_DIR)/
 	@cp Info.plist $(APP_BUNDLE)/Contents/
+	@# Keep the bundle's version in sync with the in-app badge (the single bump point):
+	@# extract "vX.Y.Z" from ContentView+Chrome.swift and write it into the copied plist,
+	@# so About/Finder/crash reports never show a stale hardcoded version again.
+	@V=$$(grep -o 'Text("v[0-9.]*")' Marquee/UI/ContentView+Chrome.swift | grep -o '[0-9][0-9.]*'); \
+	 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $$V" $(APP_BUNDLE)/Contents/Info.plist
+	@cp assets/images/AppIcon.icns $(RESOURCES_DIR)/
 	@cp assets/images/Marquee-logo-icon.png $(RESOURCES_DIR)/AppIcon.png
 	@cp assets/images/Marquee-logo-icon_128.png $(RESOURCES_DIR)/
 	@cp assets/images/Marquee-logo-icon_72.png $(RESOURCES_DIR)/

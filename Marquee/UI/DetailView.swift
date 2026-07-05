@@ -61,6 +61,17 @@ struct DetailView: View {
             if appState.currentTheme == .outerspace {
                 OuterspaceBackground().opacity(0.9)
             }
+            // This game's own blurred hero art — the same component every other view mode
+            // already shows behind its content (rootStack's HeroBackground). Detail never got
+            // it: its opaque theme fill sits in front of/hides rootStack's copy entirely, so
+            // under a non-outerspace theme (no nebula pulse either) the page read as flat dead
+            // black instead of "that game's backdrop." Rendering the SAME HeroBackground here,
+            // keyed to this page's own `game` (not the shared selectedIndex), restores it while
+            // still fully covering the carousel underneath (the blur+black overlay is opaque
+            // enough on its own).
+            if appState.heroBackgroundEnabled {
+                HeroBackground(game: game)
+            }
             // Particles only (no sine waves) so the detail art stays readable
             if appState.motionEnabled && appState.windowVisible {
                 MotionOverlay(showWaves: false)
@@ -307,8 +318,9 @@ struct DetailView: View {
         HStack(spacing: 14) {
             Spacer(minLength: 0)
 
-            // PLAY — primary (focusedButton == 0)
-            Button { session.launch(game) } label: {
+            // PLAY — primary (focusedButton == 0). Hold-to-confirm (decisions.md #96): a plain
+            // click no longer launches instantly, it has to hold for AppState.playHoldDuration.
+            PlayHoldButton(game: game, cornerRadius: 16, onComplete: { session.launch(game) }) {
                 HStack(spacing: 12) {
                     Image(systemName: "play.fill").font(.system(size: 22, weight: .bold))
                     Text("PLAY").font(.system(size: 24, weight: .heavy)).tracking(1)
@@ -327,7 +339,7 @@ struct DetailView: View {
                         .strokeBorder(actionBarActive && focusedButton == 0 ? Color.white.opacity(0.9) : .clear, lineWidth: 2.5)
                 )
             }
-            .buttonStyle(.plain)
+            .hoverHighlight(scale: 1.03, brighten: 0.08)
             .inputHint(actionBarActive && focusedButton == 0 ? .confirm : nil, method: appState.lastInputMethod)
 
             iconButton("star.fill", "Favorite", buttonIndex: 1,
@@ -397,23 +409,32 @@ struct DetailView: View {
     // MARK: - Prev/Next edge arrows
 
     private func detailNavArrow(systemName: String, action: @escaping () -> Void) -> some View {
+        // The tappable column spans the whole page height (click anywhere in it to page), but
+        // the hint badge needs to sit right next to the chevron GLYPH, which is vertically
+        // centered — attaching `.inputHint` to the full-height column (the old approach) put the
+        // badge at the column's bottom-trailing corner, i.e. the bottom of the screen, nowhere
+        // near the arrow a user is actually looking at. Scoping the hint to just the (small,
+        // centered) Image fixes that: the ZStack still fills/clips the full column for hit-
+        // testing via the Color.clear layer, independent of where the badge lands.
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.32))
-                .frame(width: 72)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
+            ZStack {
+                Color.clear.contentShape(Rectangle())
+                Image(systemName: systemName)
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.32))
+                    // Static hint (not focus-gated — these arrows aren't part of the action-bar
+                    // tab order, they're always reachable via ⌘←/⌘→ or a controller shoulder button).
+                    .inputHint(systemName == "chevron.left"
+                               ? .directional(keyboard: "⌘←", controller: "L1")
+                               : .directional(keyboard: "⌘→", controller: "R1"),
+                               method: appState.lastInputMethod)
+            }
+            .frame(width: 72)
+            .frame(maxHeight: .infinity)
         }
         .buttonStyle(.plain)
         .hoverHighlight(scale: 1.0, brighten: 0.35)
         .help(systemName == "chevron.left" ? "Previous Game (⌘←)" : "Next Game (⌘→)")
-        // Static hint (not focus-gated — these arrows aren't part of the action-bar tab order,
-        // they're always reachable via ⌘←/⌘→ or a controller shoulder button).
-        .inputHint(systemName == "chevron.left"
-                   ? .directional(keyboard: "⌘←", controller: "L1")
-                   : .directional(keyboard: "⌘→", controller: "R1"),
-                   method: appState.lastInputMethod)
     }
 
     private func artImage() -> NSImage? {

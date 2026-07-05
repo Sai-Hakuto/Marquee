@@ -111,7 +111,7 @@ final class CarouselController {
         gameNodes = []
 
         for game in games {
-            let node = GameBoxNode(game: game)
+            let node = GameBoxNode(game: game, roundedCorners: true)
             scene.rootNode.addChildNode(node)
             gameNodes.append(node)
         }

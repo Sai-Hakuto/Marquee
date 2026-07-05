@@ -16,6 +16,16 @@ actor ArtFetcher {
         let pref = UserDefaults.standard.string(forKey: "artSourcePreference") ?? "automatic"
         guard pref != "own" else { return nil }
 
+        // Offline: every remaining tier needs the network. Show the bundled icon (if the scanner
+        // extracted one) WITHOUT caching it — the cache is the permanent record, and fetch()'s
+        // first line treats a cache hit as final, so baking a low-res icon in here would block
+        // the real art from ever being fetched once connectivity returns.
+        // AppState.retryMissingArt (fired on reconnect) retries exactly the games whose art
+        // never made it into the cache.
+        guard NetworkMonitor.isOnlineNow else {
+            return game.metadata.bundledIconPath
+        }
+
         // User-provided override via "Fix Cover": Steam App ID takes priority over search term
         let overrideKey = game.id.uuidString
         let overrideAppId  = UserDefaults.standard.integer(forKey: "coverSteamId_\(overrideKey)")
@@ -36,7 +46,19 @@ actor ArtFetcher {
         // CrossOver/Epic/GOG/Mac games are all frequently ALSO on Steam (with much better cover
         // art than a bundle's own .icns), so all four try the store search first and only fall
         // back to the bundled icon extracted at scan time when there's no Steam match.
+        //
+        // Bottled-Steam CrossOver games (decisions.md #78 — a real Windows Steam client installed
+        // INSIDE the bottle) are a special case: `viaLauncherAppId` is the EXACT app ID read
+        // straight from that Steam install's own `.acf` manifest, not a guess — skip the fuzzy
+        // title search entirely and go straight to the CDN with it. Titles like "Escape the Game"
+        // are too generic for the public store search to resolve reliably (or a "close enough"
+        // match doesn't have `library_hero.jpg` even when it exists), which was silently pushing
+        // these games all the way down to the bundled-icon fallback despite the real Steam art
+        // being one known ID away. See decisions.md #111.
         case .crossOver, .epic, .gog, .applications:
+            if let knownAppId = game.metadata.viaLauncherAppId {
+                return await fetchSteamCDN(appId: knownAppId, gameId: game.id)
+            }
             let searchTitle = overrideTerm ?? game.title
             if let url = await fetchViaSteamSearch(title: searchTitle, gameId: game.id) { return url }
             if let iconPath = game.metadata.bundledIconPath,
@@ -56,6 +78,7 @@ actor ArtFetcher {
     // back to the portrait cover).
     func fetchHeader(for game: Game) async -> URL? {
         if let cached = await ArtCache.shared.cachedHeaderURL(for: game.id) { return cached }
+        guard NetworkMonitor.isOnlineNow else { return nil }   // caller falls back to the cover
 
         let key = game.id.uuidString
         let ud = UserDefaults.standard
@@ -83,7 +106,12 @@ actor ArtFetcher {
         } else {
             switch game.source {
             case .steam(let id): appId = id
-            default:             appId = await resolveSteamAppId(title: coverSearch ?? game.title)
+            default:
+                if let knownAppId = game.metadata.viaLauncherAppId {
+                    appId = knownAppId
+                } else {
+                    appId = await resolveSteamAppId(title: coverSearch ?? game.title)
+                }
             }
         }
         guard let id = appId,
@@ -100,6 +128,7 @@ actor ArtFetcher {
     // when no Steam match exists (caller falls back to the theme background).
     func fetchHero(for game: Game) async -> URL? {
         if let cached = await ArtCache.shared.cachedHeroURL(for: game.id) { return cached }
+        guard NetworkMonitor.isOnlineNow else { return nil }   // caller shows the theme backdrop
 
         let key = game.id.uuidString
         let ud = UserDefaults.standard
@@ -112,7 +141,12 @@ actor ArtFetcher {
         } else {
             switch game.source {
             case .steam(let id): appId = id
-            default:             appId = await resolveSteamAppId(title: coverSearch ?? game.title)
+            default:
+                if let knownAppId = game.metadata.viaLauncherAppId {
+                    appId = knownAppId
+                } else {
+                    appId = await resolveSteamAppId(title: coverSearch ?? game.title)
+                }
             }
         }
         guard let id = appId,
@@ -125,7 +159,7 @@ actor ArtFetcher {
         var req = URLRequest(url: url)
         req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
                      forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await URLSession.marquee.data(for: req),
               let http = response as? HTTPURLResponse, http.statusCode == 200, !data.isEmpty else { return nil }
         try? await ArtCache.shared.saveHero(data, for: gameId)
         return await ArtCache.shared.cachedHeroURL(for: gameId)
@@ -141,7 +175,7 @@ actor ArtFetcher {
         for term in attempts {
             guard let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
                   let url = URL(string: "https://store.steampowered.com/api/storesearch/?term=\(encoded)&l=english&cc=US"),
-                  let (data, _) = try? await URLSession.shared.data(from: url),
+                  let (data, _) = try? await URLSession.marquee.data(from: url),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let items = json["items"] as? [[String: Any]] else { continue }
             if let match = bestTitleMatch(searchWords: words, in: items),
@@ -154,7 +188,7 @@ actor ArtFetcher {
         var req = URLRequest(url: url)
         req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
                      forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await URLSession.marquee.data(for: req),
               let http = response as? HTTPURLResponse, http.statusCode == 200, !data.isEmpty else { return nil }
         try? await ArtCache.shared.saveHeader(data, for: gameId)
         return await ArtCache.shared.cachedHeaderURL(for: gameId)
@@ -196,7 +230,7 @@ actor ArtFetcher {
         for term in attempts {
             guard let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
                   let url = URL(string: "https://store.steampowered.com/api/storesearch/?term=\(encoded)&l=english&cc=US"),
-                  let (data, _) = try? await URLSession.shared.data(from: url),
+                  let (data, _) = try? await URLSession.marquee.data(from: url),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let items = json["items"] as? [[String: Any]] else { continue }
 
@@ -252,7 +286,7 @@ actor ArtFetcher {
         var req = URLRequest(url: searchURL)
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
+        guard let (data, _) = try? await URLSession.marquee.data(for: req),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["data"] as? [[String: Any]],
               let dbId = results.first?["id"] as? Int else { return nil }
@@ -261,7 +295,7 @@ actor ArtFetcher {
         var gridReq = URLRequest(url: gridURL)
         gridReq.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        guard let (gridData, _) = try? await URLSession.shared.data(for: gridReq),
+        guard let (gridData, _) = try? await URLSession.marquee.data(for: gridReq),
               let gridJson = try? JSONSerialization.jsonObject(with: gridData) as? [String: Any],
               let grids = gridJson["data"] as? [[String: Any]],
               let artStr = grids.first?["url"] as? String,
@@ -293,7 +327,7 @@ actor ArtFetcher {
         var req = URLRequest(url: url)
         req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
                      forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await URLSession.marquee.data(for: req),
               let http = response as? HTTPURLResponse,
               http.statusCode == 200,
               !data.isEmpty else { return nil }

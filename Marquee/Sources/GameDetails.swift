@@ -38,6 +38,10 @@ actor GameDetailsFetcher {
     private init() {}
 
     private var cache: [UUID: GameDetails] = [:]
+    // Games whose Steam lookup was skipped/failed while offline. Their cached entries are
+    // placeholders, not truth — invalidated on reconnect (see invalidateOfflineMisses) so the
+    // next Detail open fetches for real instead of showing dashes forever.
+    private var offlineMisses: Set<UUID> = []
 
     private static let steamAppsDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Steam/steamapps")
@@ -53,8 +57,10 @@ actor GameDetailsFetcher {
         let (locationDisplay, fsURL) = Self.resolveLocation(for: game)
         let gameID = Self.funGameID(for: game)
 
-        // Online fields from the Steam store (no API key).
-        let steam = await fetchSteam(for: game)
+        // Online fields from the Steam store (no API key). Offline, skip straight to the
+        // local-only placeholder rather than burning three doomed store-search attempts.
+        let online = NetworkMonitor.isOnlineNow
+        let steam = online ? await fetchSteam(for: game) : nil
 
         // File size from disk (can be slow on big installs — already off-main here).
         let fileSize = fsURL.map { Self.formattedDirectorySize($0) } ?? "—"
@@ -67,13 +73,23 @@ actor GameDetailsFetcher {
             fileSize: fileSize,
             location: locationDisplay,
             genre: steam?.genre ?? (game.metadata.genre ?? "—"),
-            about: steam?.about ?? "No description available for this title.",
+            about: steam?.about ?? (online
+                ? "No description available for this title."
+                : "You're offline — details for this game will load once you reconnect."),
             logoURL: steam?.logoURL,
             screenshots: steam?.screenshots ?? [],
             trailerURL: steam?.trailerURL
         )
         cache[game.id] = details
+        if steam == nil && !online { offlineMisses.insert(game.id) }
         return details
+    }
+
+    // Called (via MarqueeApp's NetworkMonitor.onReconnect wiring) when connectivity returns:
+    // drops every entry that was built without network so its next open re-fetches for real.
+    func invalidateOfflineMisses() {
+        for id in offlineMisses { cache.removeValue(forKey: id) }
+        offlineMisses.removeAll()
     }
 
     // MARK: - Steam store appdetails
@@ -102,7 +118,7 @@ actor GameDetailsFetcher {
         guard let id = appId else { return nil }
 
         guard let url = URL(string: "https://store.steampowered.com/api/appdetails?appids=\(id)&l=english"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await URLSession.marquee.data(from: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entry = root["\(id)"] as? [String: Any],
               (entry["success"] as? Bool) == true,
@@ -175,7 +191,7 @@ actor GameDetailsFetcher {
         for term in attempts {
             guard let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
                   let url = URL(string: "https://store.steampowered.com/api/storesearch/?term=\(encoded)&l=english&cc=US"),
-                  let (data, _) = try? await URLSession.shared.data(from: url),
+                  let (data, _) = try? await URLSession.marquee.data(from: url),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let items = json["items"] as? [[String: Any]],
                   let first = items.first,

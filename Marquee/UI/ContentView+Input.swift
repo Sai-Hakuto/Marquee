@@ -131,6 +131,10 @@ extension ContentView {
     // Returns true if consumed. Both the NSEvent key monitor and the controller route here,
     // so keyboard and controller behave identically in every focus zone.
     func handleNavKey(_ kc: UInt16) -> Bool {
+        // Pause menu owns ALL input while it's up — checked before everything else (including
+        // the Detail page, since the controller's Menu button can raise it over Detail too).
+        if appState.pauseMenuVisible { return handlePauseMenuKey(kc) }
+
         // Detail page — navigate between 4 action buttons, or (when present) the media rail
         // of screenshots/trailer above them. Up from the action bar enters the rail (if it has
         // any items); Down leaves it back to the action bar; Esc backs out one level at a time
@@ -199,7 +203,13 @@ extension ContentView {
         guard appState.fixCoverTarget == nil, appState.fixBannerTarget == nil,
               appState.artSourcePreference != .notConfigured else { return false }
         let count = appState.filteredGames.count
-        guard count > 0 else { return false }
+        // Empty library/filter: game navigation has nothing to do, but the pause menu (and
+        // through it Refresh/Settings/Quit) must stay reachable — a couch setup with zero
+        // games would otherwise be a keyboard/controller dead end.
+        guard count > 0 else {
+            if kc == 53 { openPauseMenu(); return true }
+            return false
+        }
 
         // Music widget zone — same in every view mode.
         if uiFocus == .musicPlayer { handleMusicKey(kc); return true }
@@ -215,6 +225,7 @@ extension ContentView {
                     searchSortFocusIdx = 0
                 case 125: uiFocus = .bottomControls
                 case 36, 49: openDetail()
+                case 53: openPauseMenu()   // Esc/B at the top level = the pause menu
                 default: return false
                 }
                 return true
@@ -226,25 +237,56 @@ extension ContentView {
             }
         }
 
-        // Grid / Wall / List mode — colCount drives up/down row jumps (list = single column).
+        // Rainbow Slide reuses the exact same zone (.carousel) as the flat carousel — Up/Down/
+        // Enter/Esc all mean the same thing — but Left/Right go through navigateRainbowSlide's
+        // pinned-edge-then-spin model instead of a plain ±1 navigateDelta step (see ui-views.md).
+        if appState.viewMode == .rainbowSlide {
+            switch uiFocus {
+            case .carousel:
+                switch kc {
+                case 123: navigateRainbowSlide(-1)
+                case 124: navigateRainbowSlide(+1)
+                case 126:
+                    uiFocus = .searchSort
+                    searchSortFocusIdx = 0
+                case 125: uiFocus = .bottomControls
+                case 36, 49: openDetail()
+                case 53: openPauseMenu()
+                default: return false
+                }
+                return true
+            case .topBar:         return handleTopBarKey(kc)
+            case .searchSort:     return handleSearchSortKey(kc)
+            case .bottomControls: return handleBottomControlsKey(kc)
+            case .musicPlayer:    return true
+            case .listActions:    return true
+            }
+        }
+
+        // Grid / Big / Wall / List / Compact List — colCount drives up/down row jumps (the two
+        // master/detail modes are a single column).
         let winWidth = NSApp.keyWindow?.contentView?.frame.width ?? 1200
         let colCount: Int
         switch appState.viewMode {
+        case .big:  colCount = max(1, Int((winWidth - 48) / 342))
         case .grid: colCount = max(1, Int((winWidth - 40) / 176))
         case .wall: colCount = max(1, Int((winWidth - 28) / 130))
         default:    colCount = 1
         }
+        // Both master/detail view modes (List's banner rows, Compact List's flat table rows)
+        // share the same row-browsing/action-row split — see the Right-arrow and Enter cases.
+        let isMasterDetail = appState.viewMode == .list || appState.viewMode == .compactList
 
         switch uiFocus {
         case .carousel:
             switch kc {
             case 123: navigateDelta(-1)
             case 124:
-                // List's master/detail split: Right hands off from row-browsing into the
-                // inline Play/Favorite/Hide row on the right, instead of nudging the row
-                // selection (which Left/Right otherwise mirror Up/Down for) — grid/wall have
-                // no such panel, so they keep the plain selection-nudge behavior.
-                if appState.viewMode == .list {
+                // Master/detail split: Right hands off from row-browsing into the inline
+                // Play/Favorite/Hide row on the right, instead of nudging the row selection
+                // (which Left/Right otherwise mirror Up/Down for) — grid/wall/big have no such
+                // panel, so they keep the plain selection-nudge behavior.
+                if isMasterDetail {
                     uiFocus = .listActions
                     listActionFocusIdx = 0
                 } else {
@@ -263,8 +305,9 @@ extension ContentView {
                 } else {
                     navigateDelta(-colCount)
                 }
-            // List view has no modal Detail page — Enter launches the selected game directly.
-            case 36, 49: appState.viewMode == .list ? launchSelected() : openDetail()
+            // Master/detail modes have no modal Detail page — Enter launches directly.
+            case 36, 49: isMasterDetail ? launchSelected() : openDetail()
+            case 53: openPauseMenu()   // Esc/B at the top level = the pause menu
             default: return false
             }
             return true
@@ -276,11 +319,20 @@ extension ContentView {
         }
     }
 
+    // Trailing slots after the view-mode buttons — full-screen toggle, then the pause-menu gear.
+    // Neither had a keyboard/controller focus stop before v0.25.0 (mouse-only), so a couch
+    // controller session with no keyboard/mouse in hand had no way to reach them at all.
+    // Not `private` — ContentView+Chrome.swift's topBar view reads these too, and `private` on an
+    // extension member only reaches same-FILE extensions of ContentView, not other +Chrome/+Input
+    // files (see architecture.md's file-layout note on why these extensions stay non-private).
+    var topBarFullScreenIdx: Int { visibleFilters.count + AppState.ViewMode.allCases.count }
+    var topBarGearIdx: Int { topBarFullScreenIdx + 1 }
+
     private func handleTopBarKey(_ kc: UInt16) -> Bool {
-        let modeCount = AppState.ViewMode.allCases.count
+        let lastIdx = topBarGearIdx
         switch kc {
         case 123: topBarFocusIdx = max(0, topBarFocusIdx - 1)
-        case 124: topBarFocusIdx = min(visibleFilters.count + modeCount - 1, topBarFocusIdx + 1)
+        case 124: topBarFocusIdx = min(lastIdx, topBarFocusIdx + 1)
         case 125: uiFocus = .searchSort; searchSortFocusIdx = 0
         case 53:  uiFocus = .carousel
         case 36, 49:
@@ -292,7 +344,16 @@ extension ContentView {
                         carousel.loadGames(appState.filteredGames, animated: false)
                         applyArtToCarousel()
                     }
+                    if appState.viewMode == .rainbowSlide {
+                        rainbowSlide.loadGames(appState.filteredGames)
+                        applyArtToRainbowSlide()
+                    }
                 }
+                uiFocus = .carousel
+            } else if topBarFocusIdx == topBarFullScreenIdx {
+                session.appDelegate?.toggleFullScreen()
+            } else if topBarFocusIdx == topBarGearIdx {
+                togglePauseMenu()
             } else {
                 let modeIdx = topBarFocusIdx - visibleFilters.count
                 let modes = AppState.ViewMode.allCases
@@ -303,9 +364,13 @@ extension ContentView {
                                            selectedIndex: appState.selectedIndex)
                         applyArtToCarousel()
                     }
+                    if modes[modeIdx] == .rainbowSlide {
+                        rainbowSlide.loadGames(appState.filteredGames, selectedIndex: appState.selectedIndex)
+                        applyArtToRainbowSlide()
+                    }
                 }
+                uiFocus = .carousel
             }
-            uiFocus = .carousel
         default: break
         }
         return true
@@ -333,7 +398,7 @@ extension ContentView {
         return true
     }
 
-    // Indices: 0=motion toggle, 1=hero backdrop toggle, 2-4=theme swatches.
+    // Indices: 0=motion toggle, 1=hero backdrop toggle, 2-4=theme swatches, 5=Buy Me A Coffee.
     private func handleBottomControlsKey(_ kc: UInt16) -> Bool {
         switch kc {
         case 123:
@@ -342,12 +407,14 @@ extension ContentView {
             } else {
                 bottomFocusIdx -= 1
             }
-        case 124: bottomFocusIdx = min(4, bottomFocusIdx + 1)
+        case 124: bottomFocusIdx = min(Self.coffeeFocusIdx, bottomFocusIdx + 1)
         case 126, 53: uiFocus = .carousel
         case 36, 49:
             switch bottomFocusIdx {
             case 0: appState.setMotion(!appState.motionEnabled)
             case 1: appState.setHeroBackground(!appState.heroBackgroundEnabled)
+            case Self.coffeeFocusIdx:
+                NSWorkspace.shared.open(URL(string: "https://www.buymeacoffee.com/jackharvest")!)
             default:
                 let themes = AppState.AppTheme.allCases
                 let themeIdx = bottomFocusIdx - 2
@@ -372,7 +439,8 @@ extension ContentView {
         case 36, 49:
             guard let game = appState.filteredGames[safe: appState.selectedIndex] else { break }
             switch listActionFocusIdx {
-            case 0: session.launch(game)
+            // Gated behind PLAY hold-to-confirm (decisions.md #96).
+            case 0: appState.beginPlayHold(game) { [session] in session.launch(game) }
             case 1:
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                     appState.toggleFavorite(game)
@@ -496,8 +564,16 @@ extension ContentView {
     // requires the cursor to be over the carousel (hover-in shows it, hover-out hides it);
     // for keyboard/controller it always shows while the carousel zone is active.
     func updateCarouselRing() {
-        guard appState.viewMode == .carousel else { return }
-        let show = uiFocus == .carousel && (appState.lastInputMethod != .mouse || carouselHovered)
-        carousel.setCarouselFocused(show)
+        if appState.viewMode == .carousel {
+            let show = uiFocus == .carousel && (appState.lastInputMethod != .mouse || carouselHovered)
+            carousel.setCarouselFocused(show)
+        }
+        if appState.viewMode == .rainbowSlide {
+            // Rainbow Slide's own hover ring (setHovered) is a separate, always-live signal from
+            // the mouse — this only governs the KEYBOARD/CONTROLLER ring, hidden the same way
+            // the carousel's is whenever focus leaves the zone or the mouse takes over.
+            let show = uiFocus == .carousel && (appState.lastInputMethod != .mouse || carouselHovered)
+            rainbowSlide.setFocused(show)
+        }
     }
 }

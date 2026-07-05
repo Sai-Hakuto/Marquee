@@ -47,6 +47,10 @@ extension ContentView {
                             carousel.loadGames(appState.filteredGames, animated: false)
                             applyArtToCarousel()
                         }
+                        if appState.viewMode == .rainbowSlide {
+                            rainbowSlide.loadGames(appState.filteredGames)
+                            applyArtToRainbowSlide()
+                        }
                     }
                     .buttonStyle(FilterChipStyle(
                         isActive: appState.sourceFilter == filter,
@@ -71,9 +75,12 @@ extension ContentView {
                                                selectedIndex: appState.selectedIndex)
                             applyArtToCarousel()
                         }
+                        if mode == .rainbowSlide {
+                            rainbowSlide.loadGames(appState.filteredGames, selectedIndex: appState.selectedIndex)
+                            applyArtToRainbowSlide()
+                        }
                     } label: {
-                        Image(systemName: mode.sfSymbol)
-                            .font(.system(size: 13, weight: .semibold))
+                        modeIcon(mode)
                             .frame(width: 34, height: 28)
                             .foregroundStyle(appState.viewMode == mode ? .white : .white.opacity(0.38))
                             .background(appState.viewMode == mode ? Color.white.opacity(0.18) : .clear)
@@ -108,11 +115,40 @@ extension ContentView {
                         .font(.system(size: 12, weight: .semibold))
                         .frame(width: 30, height: 28)
                         .foregroundStyle(.white.opacity(0.55))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(
+                                    uiFocus == .topBar && topBarFocusIdx == topBarFullScreenIdx
+                                        ? Color.white.opacity(0.9) : Color.clear,
+                                    lineWidth: 2
+                                )
+                        )
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hoverHighlight(scale: 1.1, brighten: 0.12)
                 .help("Toggle Full Screen (⌥⏎ / ⌃⌘F)")
+
+                // Pause menu — the mouse affordance for the same overlay Esc / a controller's
+                // Menu button raises. Crucial in full screen, where the menu bar is hidden.
+                Button { togglePauseMenu() } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 30, height: 28)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(
+                                    uiFocus == .topBar && topBarFocusIdx == topBarGearIdx
+                                        ? Color.white.opacity(0.9) : Color.clear,
+                                    lineWidth: 2
+                                )
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight(scale: 1.1, brighten: 0.12)
+                .help("Pause Menu (Esc / controller Menu button)")
             }
             .frame(minWidth: 170, alignment: .trailing)
         }
@@ -123,10 +159,32 @@ extension ContentView {
         .background(Color(red: 0.18, green: 0.04, blue: 0.44).opacity(0.82))
     }
 
+    // View-mode nav icon — a plain SF Symbol for every mode except Carousel, which gets a
+    // small hand-drawn glyph instead (decisions.md #102): the generic "stack of squares" symbol
+    // read as just another grid variant, nothing like the carousel's actual arc-with-a-raised-
+    // center layout. Three bars, short-tall-short, reads as that layout at a glance instead.
+    @ViewBuilder
+    private func modeIcon(_ mode: AppState.ViewMode) -> some View {
+        if mode == .carousel {
+            CarouselModeIcon()
+        } else {
+            Image(systemName: mode.sfSymbol)
+                .font(.system(size: 13, weight: .semibold))
+        }
+    }
+
     // MARK: - Buy Me A Coffee badge
 
+    // Reachable as the last stop in the bottomControls zone (past the theme swatches) —
+    // decisions.md #91 deliberately left it out of the focus chain since it lived in its own
+    // VStack above bottomControls, not inside it; that's still true visually, but there's no
+    // reason it can't be one more stop in the same zone (see Self.coffeeFocusIdx).
+    static let coffeeFocusIdx = 5
+
     var coffeeButton: some View {
-        Button {
+        let isFocused = uiFocus == .bottomControls && bottomFocusIdx == Self.coffeeFocusIdx
+        let tooltipText = "Support Marquee's development — opens buymeacoffee.com in your browser"
+        return Button {
             NSWorkspace.shared.open(URL(string: "https://www.buymeacoffee.com/jackharvest")!)
         } label: {
             HStack(spacing: 6) {
@@ -141,13 +199,42 @@ extension ContentView {
             .background(Color(red: 1.0, green: 0.867, blue: 0.0))
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.black, lineWidth: 1.3))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(isFocused ? Color.white.opacity(0.9) : .clear, lineWidth: 2.5)
+                    .padding(-3)
+            )
         }
         .buttonStyle(.plain)
         .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
-        .opacity(coffeeButtonHovered || !coffeeButtonDimmed ? 1.0 : 0.3)
+        .opacity(coffeeButtonHovered || isFocused || !coffeeButtonDimmed ? 1.0 : 0.3)
         .animation(.easeInOut(duration: 0.2), value: coffeeButtonHovered)
         .onHover { coffeeButtonHovered = $0 }
-        .help("Buy Me A Coffee")
+        // .help(...) still carries the explanation for VoiceOver/accessibility, but its visible
+        // bubble is macOS's own system tooltip, which only appears after ~1.5s of hover — too
+        // slow for a button whose click jumps straight to a browser and silently drops the app's
+        // controller-navigation context to keyboard/mouse (Jack's ask: show it instantly instead).
+        // The overlay below is a second, custom tooltip that fades in immediately on hover OR
+        // keyboard/controller focus, with no system delay.
+        .help(tooltipText)
+        .overlay(alignment: .top) {
+            if coffeeButtonHovered || isFocused {
+                Text(tooltipText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 200)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.black.opacity(0.92)))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(0.15), lineWidth: 1))
+                    .offset(y: -52)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .inputHint(isFocused ? .confirm : nil, method: appState.lastInputMethod)
     }
 
     // MARK: - Bottom Controls (motion toggle + theme swatches + version badge)
@@ -205,7 +292,7 @@ extension ContentView {
                 themeSwatch(idx: idx, theme: theme)
             }
 
-            Text("v0.22.0")
+            Text("v0.35.0")
                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.18))
         }
@@ -285,6 +372,25 @@ extension ContentView {
         .animation(.easeInOut(duration: 0.2), value: game?.id)
     }
 
+    // Amber "offline" pill shown next to the input badge while disconnected. Cached art, the
+    // library itself, and launching installed games all keep working — this exists so missing
+    // covers/details read as "no internet right now," not "Marquee is broken."
+    var offlineBadge: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 10, weight: .semibold))
+            Text("OFFLINE")
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundStyle(Color(red: 1.0, green: 0.75, blue: 0.35))
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color(red: 0.4, green: 0.25, blue: 0.05).opacity(0.55)))
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(red: 1.0, green: 0.75, blue: 0.35).opacity(0.35), lineWidth: 0.5))
+        .help("No internet connection — cached art and installed games still work; new art and game details resume when you're back online")
+        .transition(.opacity)
+    }
+
     // Subtle input-method badge positioned just below the top bar on the right.
     var inputMethodBadge: some View {
         let (icon, hint): (String, String) = {
@@ -322,5 +428,18 @@ extension ContentView {
     private func loadTitleFromBundle() -> NSImage? {
         guard let url = Bundle.main.url(forResource: "Marqee-Title", withExtension: "png") else { return nil }
         return NSImage(contentsOf: url)
+    }
+}
+
+// Three bars, short-tall-short — the carousel's own silhouette (side boxes scaled down, the
+// centered one scaled up) in miniature. `.foregroundStyle` from the call site colors it exactly
+// like an SF Symbol would (RoundedRectangle picks up the ambient foreground style same as Image).
+private struct CarouselModeIcon: View {
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            RoundedRectangle(cornerRadius: 1.3).frame(width: 4, height: 10)
+            RoundedRectangle(cornerRadius: 1.6).frame(width: 5, height: 15)
+            RoundedRectangle(cornerRadius: 1.3).frame(width: 4, height: 10)
+        }
     }
 }

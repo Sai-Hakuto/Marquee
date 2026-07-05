@@ -1,11 +1,18 @@
 import AppKit
 import SwiftUI
 import ObjectiveC
+import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     private var mainWindow: NSWindow?
+
+    // Breadcrumbs for window lifecycle (Console.app / `log show --predicate 'subsystem ==
+    // "com.marquee.gaming-launcher"'`). Exists because the login-item no-window failure leaves
+    // zero trace otherwise: the app runs, music plays, and there is nothing to inspect after
+    // the fact. Keep these — they're the only forensics for launch-context-only bugs.
+    private nonisolated static let log = Logger(subsystem: "com.marquee.gaming-launcher", category: "window")
 
     // Local event monitor for nav-bar window drag.
     //
@@ -35,12 +42,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowedFrame: NSRect?  // the intended frame on the PRIMARY display (pos + size)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.log.info("didFinishLaunching, windows=\(NSApplication.shared.windows.count)")
         configureMainWindow()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        installActiveObserver()
+
+        // Self-heal watchdog for the login-item no-window launch: on a real login (not
+        // reproducible via `open -g`), SwiftUI can finish launching without ever presenting the
+        // WindowGroup window — NSApp.windows stays empty, the app sits in the Dock playing music
+        // with nothing on any screen. Apple's fix (.defaultLaunchBehavior(.presented)) is macOS
+        // 15-only, so on a 14 target we detect and recover instead. Two shots: launch-time load
+        // can make the first fire too early to be trusted alone.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.ensureMainWindowExists()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+            self?.ensureMainWindowExists()
+        }
+
+        // Login-item / `open -g` launches never actually become the active app, no matter how
+        // many times NSApp.activate(ignoringOtherApps:) is retried — verified live with `open -g`
+        // (Terminal stayed frontmost per System Events for 30+ seconds straight). The window
+        // still gets ordered front and grows to fill the screen (that's plain window-server
+        // z-order, independent of app activation), so couch mode LOOKS like it's working, but
+        // NSApp.presentationOptions only ever visually hides the Dock/menu bar while we're
+        // actually active — so they sit on top of the fullscreen window forever. The one thing
+        // that was verified live to force real activation from this backgrounded state is a
+        // plain `open` on our own already-running bundle (unlike `-g`, LaunchServices treats that
+        // as a normal user-facing open request and brings the existing instance forward instead
+        // of launching a second copy). installActiveObserver() re-applies presentationOptions the
+        // moment activation actually lands.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.forceActivationIfNeeded()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { [weak self] in
+            self?.forceActivationIfNeeded()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.5) { [weak self] in
+            self?.forceActivationIfNeeded()
+        }
+    }
+
+    private func forceActivationIfNeeded() {
+        guard !NSApp.isActive else { return }
+        Self.log.error("forceActivationIfNeeded: still not active — self-opening bundle to force focus")
+        NSWorkspace.shared.open(Bundle.main.bundleURL)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    // Dock-icon click (and our own synthesized reopen below). Returning true lets SwiftUI
+    // recreate the WindowGroup window when none exists — but that fresh window arrives
+    // UNCONFIGURED (titled style, windowed, not fullscreen), so re-run the whole configure
+    // pass, which also re-applies couch-mode fullscreen. Verified live against a windowless
+    // login-item instance: the reopen reliably rebuilds the window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Self.log.info("shouldHandleReopen hasVisibleWindows=\(flag)")
+        if !flag && NSApplication.shared.windows.first(where: { !($0 is NSPanel) }) == nil {
+            mainWindow = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.configureMainWindow()
+            }
+        }
+        return true
+    }
+
+    // Watchdog body: if SwiftUI never presented the main window, synthesize the one stimulus
+    // proven to make it do so — a reopen Apple event to ourselves (same thing a Dock-icon click
+    // sends) — then configure the new window normally. If the window exists but isn't on screen
+    // (activation declined on a background launch), just re-order it front.
+    private func ensureMainWindowExists() {
+        let hasMain = NSApplication.shared.windows.contains { !($0 is NSPanel) }
+        if !hasMain {
+            Self.log.error("watchdog: no main window after launch — sending self-reopen")
+            mainWindow = nil
+            sendSelfReopenEvent()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.configureMainWindow()
+            }
+        } else if let window = mainWindow, !window.isVisible, !window.isMiniaturized {
+            Self.log.error("watchdog: main window exists but not visible — reasserting")
+            reassertIntendedFrame()
+        } else {
+            Self.log.info("watchdog: main window ok")
+        }
+    }
+
+    private func sendSelfReopenEvent() {
+        let target = NSAppleEventDescriptor(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        let event = NSAppleEventDescriptor(
+            eventClass: AEEventClass(kCoreEventClass),
+            eventID: AEEventID(kAEReopenApplication),
+            targetDescriptor: target,
+            returnID: AEReturnID(kAutoGenerateReturnID),
+            transactionID: AETransactionID(kAnyTransactionID)
+        )
+        _ = try? event.sendEvent(options: [.noReply], timeout: 1.0)
+    }
 
     func revealWindow() {
         guard let window = mainWindow else { return }
@@ -50,18 +149,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Window Setup
 
-    private func configureMainWindow(retries: Int = 20) {
+    private func configureMainWindow(retries: Int = 20, slowRetries: Int = 150) {
         // With @NSApplicationDelegateAdaptor, applicationDidFinishLaunching can fire BEFORE SwiftUI's
         // WindowGroup has created its NSWindow — in which case windows.first is nil and, historically,
         // NONE of our window config (borderless style, fixed size, primary-display centering) got
         // applied, leaving SwiftUI's restored frame to win entirely. Retry on the main queue until the
         // window exists so our configuration is applied every launch, not just when we win the race.
+        //
+        // Two retry gears: the original per-runloop-turn retries cover the normal race (the window
+        // lands a turn or two later), but all 20 burn off in milliseconds — under login-time load
+        // that's nowhere near enough, and giving up silently is exactly the no-window failure. So
+        // after the fast turns, keep polling at 0.1s for ~15s more before giving up.
         guard let window = NSApplication.shared.windows.first(where: { !($0 is NSPanel) }) else {
-            guard retries > 0 else { return }
-            DispatchQueue.main.async { [weak self] in self?.configureMainWindow(retries: retries - 1) }
+            if retries > 0 {
+                DispatchQueue.main.async { [weak self] in
+                    self?.configureMainWindow(retries: retries - 1, slowRetries: slowRetries)
+                }
+            } else if slowRetries > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.configureMainWindow(retries: 0, slowRetries: slowRetries - 1)
+                }
+            } else {
+                Self.log.error("configureMainWindow: gave up — no main window appeared")
+            }
             return
         }
+        Self.log.info("configureMainWindow: configuring window \(window.windowNumber)")
         mainWindow = window
+
+        // If the previous window died while in faux fullscreen (login-item recovery path), reset
+        // the fullscreen bookkeeping so the couch-mode tail below can re-enter cleanly on this
+        // fresh window instead of half-applying to state that no longer matches any window.
+        if isFauxFullScreen {
+            isFauxFullScreen = false
+            appState.isWindowFullScreen = false
+            savedWindowFrame = nil
+            NSApp.presentationOptions = []
+        }
         Self.forceCanAlwaysBecomeKey(window)
 
         // No `.resizable`: the window is a fixed size (the user can't drag-resize it).
@@ -107,22 +231,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // One-shot, a moment after launch, to guarantee the window is centered on the main display
         // even if SwiftUI nudged the origin during its initial content-size layout. Not an observer,
-        // so it can't loop; skipped if the user has already moved or full-screened the window.
+        // so it can't loop; skipped if the user has already moved the window. Runs a second time
+        // later because on a login/background launch SwiftUI's initial layout can land well after
+        // the first shot (and after the couch-mode fullscreen grow), stomping the frame back to
+        // windowed size with nothing left to correct it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.reassertWindowedFrame()
+            self?.reassertIntendedFrame()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            self?.reassertIntendedFrame()
         }
 
         window.makeKeyAndOrderFront(nil)
         installDragMonitor()
         installOcclusionObserver(for: window)
+        installCloseLogger(for: window)
+
+        // Couch mode: open straight into faux full screen. Deferred one turn so SwiftUI's
+        // content has mounted and can pick up the lifted size pin (isWindowFullScreen) — the
+        // splash overlay is opaque and covers the grow, so nothing visibly "jumps."
+        if appState.startInFullScreen {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isFauxFullScreen else { return }
+                self.toggleFullScreen()
+            }
+        }
     }
 
     // Keeps AppState.windowVisible in sync with the window's real on-screen state — fires on
     // miniaturize/deminiaturize, full coverage by another window, and Space/display switches.
     // See AppState.windowVisible for why this exists (gating MotionOverlay's continuous 30fps
     // Canvas so it stops costing anything the instant the window isn't actually visible).
-    private func installOcclusionObserver(for window: NSWindow) {
+    private var occlusionObserver: (any NSObjectProtocol)?
+    private var closeObserver: (any NSObjectProtocol)?
+
+    // AppKit silently clears NSApp.presentationOptions back to [] whenever the app resigns
+    // active — Apple's docs say the option only holds "while your app is active" — and never
+    // restores it on our behalf. That's invisible during normal interactive use (toggling full
+    // screen already implies we're frontmost), but on a login-item autostart the couch-mode
+    // toggleFullScreen() can fire before activation has actually landed, or something can steal
+    // active status in the gap before the window settles: the window still grows to cover the
+    // whole screen (reassertIntendedFrame corrects the FRAME), but presentationOptions comes
+    // back 0 and the Dock renders on top of it with nothing left to ever re-hide it. Re-assert
+    // on every reactivation while in faux full screen so this can't get stuck.
+    private func installActiveObserver() {
         NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isFauxFullScreen else { return }
+                NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+            }
+        }
+    }
+
+    private func installOcclusionObserver(for window: NSWindow) {
+        // configureMainWindow can run more than once (login-item window recovery) — replace,
+        // never stack, per-window observers.
+        if let old = occlusionObserver { NotificationCenter.default.removeObserver(old) }
+        occlusionObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification,
             object: window,
             queue: .main
@@ -131,6 +300,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let window else { return }
                 self?.appState.windowVisible = window.occlusionState.contains(.visible)
             }
+        }
+    }
+
+    // Forensics only: the login-item no-window failure left an app with NSApp.windows == [] and
+    // no way to tell, after the fact, whether the window was closed or never created. If the
+    // main window ever closes outside a normal quit, this leaves the smoking gun (with call
+    // stack) in the unified log.
+    private func installCloseLogger(for window: NSWindow) {
+        if let old = closeObserver { NotificationCenter.default.removeObserver(old) }
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            let stack = Thread.callStackSymbols.joined(separator: "\n")
+            Self.log.error("main window willClose\n\(stack, privacy: .public)")
         }
     }
 
@@ -171,14 +356,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.maxSize = size
     }
 
-    // Force the window back to its intended frame on the primary display. Called only as a one-shot a
-    // moment after launch (see configureMainWindow) — never on an ongoing notification, so it cannot
-    // fight the user or loop. No-op in faux full screen or while the user is actively dragging.
-    private func reassertWindowedFrame() {
-        guard !isFauxFullScreen, !isDraggingWindow,
-              let window = mainWindow, let frame = windowedFrame,
-              window.frame != frame else { return }
-        window.setFrame(frame, display: true)
+    // Force the window back to its intended frame. Called only as one-shots a moment after launch
+    // (see configureMainWindow) — never on an ongoing notification, so it cannot fight the user or
+    // loop. Fullscreen-aware: if couch mode already grew the window to cover its display, the
+    // intended frame is that display's full frame, not the windowed one — the pre-v0.34.1 version
+    // no-op'd here, which meant a startInFullScreen launch whose frame SwiftUI stomped back to
+    // windowed (the login-item race) was never corrected. Also re-orders the window front, since a
+    // login-item launch isn't user-initiated and macOS may have declined our activation.
+    private func reassertIntendedFrame() {
+        guard !isDraggingWindow, let window = mainWindow else { return }
+        if isFauxFullScreen {
+            NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+            if let screen = window.screen ?? NSScreen.main, window.frame != screen.frame {
+                window.setFrame(screen.frame, display: true)
+            }
+        } else if let frame = windowedFrame, window.frame != frame {
+            window.setFrame(frame, display: true)
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Full Screen (faux)
@@ -215,6 +411,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Send the window to the next connected display (wraps around) — the "play it on the TV"
+    // affordance for an AirPlay/extended display, reachable from the pause menu so it works in
+    // full screen with a controller. In faux full screen the window re-covers the new display's
+    // whole frame; windowed, it re-centers there (and that becomes the remembered frame).
+    func moveToNextDisplay() {
+        guard let window = mainWindow else { return }
+        let screens = NSScreen.screens
+        guard screens.count > 1 else { return }
+        let currentIdx = screens.firstIndex(where: { $0 == window.screen }) ?? 0
+        let next = screens[(currentIdx + 1) % screens.count]
+
+        if isFauxFullScreen {
+            window.setFrame(next.frame, display: true, animate: true)
+        } else {
+            let vf   = next.visibleFrame
+            let size = window.frame.size
+            let frame = NSRect(x: vf.minX + (vf.width - size.width) / 2,
+                               y: vf.minY + (vf.height - size.height) / 2,
+                               width: size.width, height: size.height)
+            window.setFrame(frame, display: true, animate: true)
+            windowedFrame = frame
+        }
+    }
+
     // MARK: - Game Session (auto-minimize while a game is running)
 
     // Miniaturize to the Dock when a game takes over. We keep the window's frame and faux
@@ -234,6 +454,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Drag Monitor
 
     private func installDragMonitor() {
+        // Install once — configureMainWindow can re-run (login-item window recovery) and the
+        // monitor reads `mainWindow` dynamically, so one monitor serves every window generation.
+        guard dragMonitor == nil else { return }
         dragMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
         ) { [weak self] event in

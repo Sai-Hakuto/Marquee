@@ -389,10 +389,11 @@ final class MusicPlayerController {
 
     func scheduleAutoMinimize(after seconds: Double = 15) {
         autoMinimizeTask?.cancel()
-        guard isExpanded, !autoMinimizeSuspended else { return }
+        guard isExpanded, !autoMinimizeSuspended, !stickInteractionActive else { return }
         autoMinimizeTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            guard !Task.isCancelled, let self, self.isExpanded, !self.autoMinimizeSuspended else { return }
+            guard !Task.isCancelled, let self, self.isExpanded, !self.autoMinimizeSuspended,
+                  !self.stickInteractionActive else { return }
             withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) { self.isExpanded = false }
         }
     }
@@ -407,6 +408,33 @@ final class MusicPlayerController {
 
     // Any user interaction with the widget restarts the inactivity countdown.
     func noteInteraction() { if isExpanded { scheduleAutoMinimize() } }
+
+    // MARK: - Right-stick interaction (v0.29.0)
+    //
+    // The right thumbstick drives volume/skip/seek unconditionally in every focus zone (couch-
+    // mode convenience, v0.25.0) — but that meant nudging it while the widget had already
+    // auto-minimized (or was never expanded) changed the volume/track with nothing on screen to
+    // show for it: `noteInteraction()` only RESCHEDULES the countdown if already expanded, it
+    // never forces the widget visible the way clicking an expanded control implies. A separate
+    // flag (not `autoMinimizeSuspended`, which the keyboard/controller focus-zone case also
+    // uses and could otherwise be prematurely cleared by whichever interaction ends first)
+    // keeps the widget pinned open for exactly as long as the stick stays engaged — mirrors the
+    // existing mouse-hover pattern (onHover cancels/reschedules) but for a "hold" that isn't a
+    // hover at all.
+    private(set) var stickInteractionActive = false
+
+    func beginStickInteraction() {
+        stickInteractionActive = true
+        cancelAutoMinimize()
+        if !isExpanded {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) { isExpanded = true }
+        }
+    }
+
+    func endStickInteraction() {
+        stickInteractionActive = false
+        scheduleAutoMinimize()
+    }
 
     func setVolume(_ v: Float) {
         volume = v

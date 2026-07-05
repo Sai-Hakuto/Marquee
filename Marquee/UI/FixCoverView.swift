@@ -233,6 +233,23 @@ struct FixCoverContent: View {
 
             Divider().overlay(Color.white.opacity(0.12))
 
+            // ── Offline notice ───────────────────────────────────────────
+            // Both search tabs are network-backed, and their empty state ("No results") is
+            // indistinguishable from a network failure — say it outright, and point at the one
+            // tab that still works.
+            if !NetworkMonitor.shared.isOnline {
+                HStack(spacing: 8) {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("You're offline — Steam and Web search won't return results. \"My File\" still works.")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(Color(red: 1.0, green: 0.75, blue: 0.35))
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(red: 0.4, green: 0.25, blue: 0.05).opacity(0.4)))
+            }
+
             // ── Search source picker ─────────────────────────────────────
             HStack {
                 Picker("", selection: $searchSource) {
@@ -512,7 +529,7 @@ struct FixCoverContent: View {
     private func searchSteam(for term: String) async -> [SearchResult] {
         guard let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://store.steampowered.com/api/storesearch/?term=\(encoded)&l=english&cc=US"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let (data, _) = try? await URLSession.marquee.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = json["items"] as? [[String: Any]] else { return [] }
         return items.prefix(8).compactMap { item in
@@ -535,7 +552,7 @@ struct FixCoverContent: View {
         guard let homeURL = URL(string: "https://duckduckgo.com/?q=\(q)&iax=images&ia=images") else { return [] }
         var homeReq = URLRequest(url: homeURL)
         homeReq.setValue(Self.browserUA, forHTTPHeaderField: "User-Agent")
-        guard let (html, _) = try? await URLSession.shared.data(for: homeReq),
+        guard let (html, _) = try? await URLSession.marquee.data(for: homeReq),
               let htmlStr = String(data: html, encoding: .utf8),
               let vqd = Self.extractVQD(from: htmlStr) else { return [] }
 
@@ -551,7 +568,7 @@ struct FixCoverContent: View {
         imgReq.setValue("cors",        forHTTPHeaderField: "Sec-Fetch-Mode")
         imgReq.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
 
-        guard let (imgData, _) = try? await URLSession.shared.data(for: imgReq),
+        guard let (imgData, _) = try? await URLSession.marquee.data(for: imgReq),
               let json = try? JSONSerialization.jsonObject(with: imgData) as? [String: Any],
               let results = json["results"] as? [[String: Any]] else { return [] }
         // Banner mode wants horizontal art — float the widest (landscape) results to the front.
@@ -704,7 +721,7 @@ struct SearchResultCard: View {
         guard let url = result.artURL else { loading = false; return }
         var req = URLRequest(url: url)
         req.setValue(FixCoverContent.browserUA, forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
+        guard let (data, response) = try? await URLSession.marquee.data(for: req),
               let http = response as? HTTPURLResponse, http.statusCode == 200,
               let img = NSImage(data: data) else { loading = false; return }
         coverImage = img
