@@ -9,6 +9,8 @@ A console-style game launcher for macOS that finds every game you own — CrossO
 
 ![Marquee's 3D carousel](docs/screenshots/hero-carousel.jpg)
 
+<p align="center"><a href="https://jackharvest.com/Marquee">jackharvest.com/Marquee</a></p>
+
 ## Why
 
 Games on a Mac end up scattered across half a dozen launchers: native titles in `/Applications`, Steam's library, Epic's launcher, GOG installs, and Windows games running through CrossOver — some of those installed through a *Windows* copy of Steam living inside a bottle. Marquee scans all of it automatically and gives you one place to browse, search, and play.
@@ -36,6 +38,11 @@ Games on a Mac end up scattered across half a dozen launchers: native titles in 
 | ![Wall view](docs/screenshots/wall-view.jpg) | ![Search and sort](docs/screenshots/search-sort.jpg) | ![Carousel](docs/screenshots/carousel-blackwidow.jpg) |
 
 ## Getting started
+
+Mac only — Marquee exists to fill the Mac-shaped hole [Playnite](https://playnite.link) leaves, so there
+are no Windows or Linux builds. Each [release](https://github.com/jackharvest/Marquee/releases) ships two
+ways: a ready-to-run `Marquee.app` (drag it into `/Applications`, no installer) and the raw source as a
+zip, for anyone who'd rather build it themselves.
 
 **Requirements:** macOS 14 or later. A Swift toolchain (Swift 5.9+) to build — no Xcode project needed.
 
