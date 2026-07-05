@@ -153,6 +153,9 @@ extension ContentView {
             // close the menu first so the window opens into a normal focus situation.
             closePauseMenu()
             openSettings()
+        case .checkForUpdates:
+            soundEffects.play(.confirm)
+            Task { await AppUpdater.shared.checkForUpdates(userInitiated: true, appState: appState) }
         case .about:
             NSApp.orderFrontStandardAboutPanel(nil)
         case .quit:

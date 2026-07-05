@@ -75,6 +75,7 @@ enum PauseMenuItem: Equatable {
     case startInFullScreen   // toggle
     case controllerLayout    // cycler (Standard/Nintendo button preset)
     case allSettings
+    case checkForUpdates
     case about
     case quit
 
@@ -107,6 +108,7 @@ enum PauseMenuItem: Equatable {
         case .startInFullScreen: return "sunrise.fill"
         case .controllerLayout:  return "gamecontroller.fill"
         case .allSettings:       return "gearshape.fill"
+        case .checkForUpdates:   return "arrow.triangle.2.circlepath"
         case .about:             return "info.circle.fill"
         case .quit:              return "xmark.circle.fill"
         }
@@ -171,7 +173,7 @@ enum PauseMenuCategory: Int, CaseIterable {
         case .controller:
             return [.controllerLayout]
         case .system:
-            return [.allSettings, .about, .quit]
+            return [.allSettings, .checkForUpdates, .about, .quit]
         }
     }
 }
@@ -550,6 +552,7 @@ struct PauseMenuView: View {
         case .startInFullScreen: return "Start in Full Screen"
         case .controllerLayout:  return "Button Layout"
         case .allSettings:       return "All Settings…"
+        case .checkForUpdates:   return "Check for Updates…"
         case .about:             return "About Marquee"
         case .quit:              return "Quit Marquee"
         }

@@ -61,6 +61,10 @@ struct MarqueeApp: App {
             // app's own menu (right under "About Marquee", first thing visible when the menu bar
             // is opened at all) is the more discoverable spot.
             CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    Task { await AppUpdater.shared.checkForUpdates(userInitiated: true, appState: delegate.appState) }
+                }
+                Divider()
                 Button("Refresh Library") {
                     Task { await delegate.appState.loadAllGames() }
                 }

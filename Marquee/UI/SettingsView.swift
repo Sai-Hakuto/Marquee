@@ -44,6 +44,7 @@ struct SettingsView: View {
                 behaviorSection
                 controllerSection
                 couchModeSection
+                updatesSection
                 resetSection
             }
             .padding(22)
@@ -491,6 +492,37 @@ struct SettingsView: View {
             case .playStats:
                 return "Play counts, last-played dates, and total playtime for every game will be permanently erased. This cannot be undone."
             }
+        }
+    }
+
+    // MARK: - Updates section
+
+    private var updatesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Updates")
+
+            HStack(spacing: 10) {
+                iconBadge("arrow.triangle.2.circlepath", Self.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Marquee v\(AppUpdater.shared.currentVersion)")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Checked automatically on launch")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                Spacer()
+                Button("Check Now") {
+                    Task { await AppUpdater.shared.checkForUpdates(userInitiated: true, appState: appState) }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
         }
     }
 

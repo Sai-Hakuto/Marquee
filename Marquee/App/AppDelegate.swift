@@ -82,6 +82,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10.5) { [weak self] in
             self?.forceActivationIfNeeded()
         }
+
+        // Silent update check — couch users should never have to think about updating, so this
+        // never surfaces anything unless a newer release actually exists (a failed/offline check
+        // is indistinguishable from "up to date" here; the app menu's own "Check for Updates…"
+        // is the userInitiated path that reports failures).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
+            Task { await AppUpdater.shared.checkForUpdates(userInitiated: false, appState: self?.appState) }
+        }
     }
 
     private func forceActivationIfNeeded() {
