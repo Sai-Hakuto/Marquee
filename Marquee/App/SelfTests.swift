@@ -35,6 +35,7 @@ enum SelfTests {
                 case .steam(let a):            key = "st:\(a)"
                 case .epic(let app, let c):    key = "ep:\(c):\(app)"
                 case .applications(let u):     key = "app:\(u.path)"
+                case .playCover(let id, _):    key = "pc:\(id)"
                 case .gog(let id, _):          key = "gog:\(id)"
                 }
                 let id8 = String(g.id.uuidString.prefix(8))

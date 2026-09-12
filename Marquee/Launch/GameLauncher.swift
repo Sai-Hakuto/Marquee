@@ -15,7 +15,7 @@ enum GameLauncher {
             guard let url = URL(string: str) else { return false }
             return NSWorkspace.shared.open(url)
 
-        case .applications(let bundleURL), .gog(_, let bundleURL):
+        case .applications(let bundleURL), .gog(_, let bundleURL), .playCover(_, let bundleURL):
             NSWorkspace.shared.openApplication(at: bundleURL,
                                                configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
             return true
@@ -31,7 +31,7 @@ enum GameLauncher {
         switch game.source {
         case .steam(let id):           return "steam://rungameid/\(id)"
         case .epic(let app, let cat):  return "epic apps/\(cat):\(app)"
-        case .applications(let u), .gog(_, let u): return u.path
+        case .applications(let u), .gog(_, let u), .playCover(_, let u): return u.path
         case .crossOver(let bottle, let exePath):
             let bottleURL = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Application Support/CrossOver/Bottles/\(bottle)")

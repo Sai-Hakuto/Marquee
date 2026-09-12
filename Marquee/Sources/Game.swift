@@ -31,6 +31,7 @@ enum GameSource: Sendable {
     case crossOver(bottleName: String, exePath: String)
     case steam(appId: Int)
     case applications(bundleURL: URL)
+    case playCover(bundleID: String, bundleURL: URL)
     case epic(appName: String, catalogItemId: String)
     case gog(gameId: String, bundleURL: URL)
 }
@@ -83,6 +84,7 @@ extension GameSource {
         case .steam(let appId):               key = "st:\(appId)"
         case .epic(let appName, let catId):   key = "ep:\(catId):\(appName)"
         case .applications(let url):          key = "app:\(url.path)"
+        case .playCover(let bundleID, _):      key = "pc:\(bundleID)"
         // Keyed by GOG's own catalog gameId, not the bundle path — a reinstall (or the user
         // moving the .app) still resolves to the same game, same as Steam's appId.
         case .gog(let gameId, _):             key = "gog:\(gameId)"
@@ -99,6 +101,7 @@ extension Game {
         case .crossOver: return "CrossOver"
         case .steam:     return "Steam"
         case .applications: return "Mac"
+        case .playCover: return "PlayCover"
         case .epic:      return "Epic"
         case .gog:       return "GOG"
         }
@@ -112,6 +115,7 @@ extension Game {
         case .crossOver:    return (0.85, 0.27, 0.16)   // CrossOver / CodeWeavers crimson-orange
         case .steam:        return (0.11, 0.49, 0.82)   // Steam blue
         case .applications: return (0.40, 0.43, 0.49)   // Apple graphite / silver
+        case .playCover:    return (0.19, 0.66, 0.67)   // PlayCover teal
         case .epic:         return (0.17, 0.18, 0.22)   // Epic Games near-black charcoal
         case .gog:          return (0.56, 0.22, 0.66)   // GOG.com violet
         }

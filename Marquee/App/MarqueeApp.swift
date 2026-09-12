@@ -100,6 +100,7 @@ struct MarqueeApp: App {
                     Button("Epic")       { delegate.appState.sourceFilter = .epic }
                     Button("GOG")        { delegate.appState.sourceFilter = .gog }
                     Button("Mac")        { delegate.appState.sourceFilter = .applications }
+                    Button("PlayCover")  { delegate.appState.sourceFilter = .playCover }
                     if delegate.appState.hasHiddenGames {
                         Button("Hidden") { delegate.appState.sourceFilter = .hidden }
                     }

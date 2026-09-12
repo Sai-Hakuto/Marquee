@@ -88,7 +88,7 @@ struct DetailView: View {
                     .frame(maxHeight: .infinity)
             }
             .padding(.top, 76)
-            .padding(.bottom, 130)
+            .padding(.bottom, (!details.screenshots.isEmpty || details.trailerURL != nil) ? 230 : 130)
 
             VStack(spacing: 0) {
                 Spacer()
@@ -172,9 +172,8 @@ struct DetailView: View {
     // past its own bounds ("trapped in the viewport" rather than running off-screen).
     @State private var railScrollProxy: ScrollViewProxy?
 
-    // Mouse wheel over the Detail page steps through the media rail — the rail is the only
-    // scrollable region on this page, so no frame-hit-testing is needed. Mirrors the accumulator
-    // pattern MarqueeSCNView.scrollWheel uses for the carousel (trackpad dx vs. mouse dy).
+    // Horizontal trackpad gestures step through the media rail. Vertical scrolling belongs to
+    // the metadata/about column, including when it comes from a traditional mouse wheel.
     // NSEvent.addLocalMonitorForEvents' handler is treated as @Sendable/nonisolated by the
     // compiler even when declared lexically inside a @MainActor method (same class of issue as
     // decision #34's GCController callbacks) — the event's own scalar fields are read directly
@@ -186,7 +185,7 @@ struct DetailView: View {
         railScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             let precise = event.hasPreciseScrollingDeltas
             let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
-            let consumes = precise ? abs(dx) > max(abs(dy), 1.0) : abs(dy) >= 1.0
+            let consumes = precise && abs(dx) > max(abs(dy), 1.0)
             guard consumes else { return event }
             Task { @MainActor in self.stepRail(precise: precise, dx: dx, dy: dy) }
             return nil
@@ -218,42 +217,44 @@ struct DetailView: View {
                 .frame(height: 120, alignment: .topLeading)
                 .frame(maxWidth: 420, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 13) {
-                row("photo.on.rectangle", "Publisher", details.publisher)
-                row("calendar", "Release Date", details.releaseDate)
-                row("person.2.fill", "Players", details.players)
-                row("number", "Game ID", details.gameID)
-                row("internaldrive.fill", "File Size", details.fileSize)
-                row("mappin.and.ellipse", "Location", details.location, multiline: true)
-                row("paintpalette.fill", "Genre", details.genre)
-                row("clock.fill", "Playtime", AppState.formattedPlaytime(appState.playtime(for: game)))
-            }
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 13) {
+                        row("photo.on.rectangle", "Publisher", details.publisher)
+                        row("calendar", "Release Date", details.releaseDate)
+                        row("person.2.fill", "Players", details.players)
+                        row("number", "Game ID", details.gameID)
+                        row("internaldrive.fill", "File Size", details.fileSize)
+                        row("mappin.and.ellipse", "Location", details.location, multiline: true)
+                        row("paintpalette.fill", "Genre", details.genre)
+                        row("clock.fill", "Playtime", AppState.formattedPlaytime(appState.playtime(for: game)))
+                    }
 
-            Rectangle()
-                .fill(Color.white.opacity(0.14))
-                .frame(width: 470, height: 1)
-                .padding(.top, 2)
+                    Rectangle()
+                        .fill(Color.white.opacity(0.14))
+                        .frame(height: 1)
 
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 12) {
-                    Image(systemName: "info.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Color(red: 0.62, green: 0.5, blue: 0.95))
-                        .frame(width: 22)
-                    Text("ABOUT THE GAME")
-                        .font(.system(size: 14, weight: .heavy))
-                        .tracking(1.2)
-                        .foregroundStyle(.white.opacity(0.95))
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "info.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Color(red: 0.62, green: 0.5, blue: 0.95))
+                                .frame(width: 22)
+                            Text("ABOUT THE GAME")
+                                .font(.system(size: 14, weight: .heavy))
+                                .tracking(1.2)
+                                .foregroundStyle(.white.opacity(0.95))
+                        }
+                        Text(details.about)
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineSpacing(3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                Text(details.about)
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.82))
-                    .lineSpacing(3)
-                    .frame(maxWidth: 470, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: 470, maxHeight: .infinity)
         }
         .opacity(appeared ? 1 : 0)
         .offset(x: appeared ? 0 : -18)

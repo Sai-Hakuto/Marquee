@@ -95,7 +95,7 @@ enum GameProcessMonitor {
     static func awaitSession(for game: Game, baseline: Set<String>,
                              onStarted: () async -> Void) async {
         switch game.source {
-        case .applications(let bundleURL), .gog(_, let bundleURL):
+        case .applications(let bundleURL), .gog(_, let bundleURL), .playCover(_, let bundleURL):
             let target = bundleURL.standardizedFileURL
             await waitStartThenExit(isRunning: { macAppRunning(target) }, onStarted: onStarted)
 

@@ -1,13 +1,16 @@
 import Foundation
+import ImageIO
 
 actor ArtFetcher {
     static let shared = ArtFetcher()
     private init() {}
+    private var playCoverMigration: [UUID: Task<Void, Never>] = [:]
 
     private let userArtDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Marquee/Art")
 
     func fetch(for game: Game) async -> URL? {
+        await preparePlayCoverArt(for: game)
         if let cached = await ArtCache.shared.cachedURL(for: game.id) { return cached }
 
         // User-placed files always win regardless of preference
@@ -43,6 +46,19 @@ actor ArtFetcher {
         case .steam(let appId):
             return await fetchSteamCDN(appId: appId, gameId: game.id)
 
+        case .playCover(let bundleID, _):
+            // Apple identifies this exact installed iOS app by bundle ID. Steam art is only a
+            // fallback for sideloaded titles absent from Apple's catalog.
+            if let artwork = await PlayCoverCatalog.shared.storeInfo(bundleID: bundleID)?.artworkURL,
+               let art = await download(from: artwork, gameId: game.id) { return art }
+            if await PlayCoverCatalog.shared.storeInfo(bundleID: bundleID) == nil,
+               let appId = await PlayCoverCatalog.shared.exactSteamAppID(title: game.title),
+               let art = await fetchSteamCDN(appId: appId, gameId: game.id) { return art }
+            if let icon = game.metadata.bundledIconPath {
+                return await cacheLocalFile(at: icon, gameId: game.id)
+            }
+            return nil
+
         // CrossOver/Epic/GOG/Mac games are all frequently ALSO on Steam (with much better cover
         // art than a bundle's own .icns), so all four try the store search first and only fall
         // back to the bundled icon extracted at scan time when there's no Steam match.
@@ -77,6 +93,7 @@ actor ArtFetcher {
     // one via the public store search. Returns nil when no Steam match exists (caller falls
     // back to the portrait cover).
     func fetchHeader(for game: Game) async -> URL? {
+        await preparePlayCoverArt(for: game)
         if let cached = await ArtCache.shared.cachedHeaderURL(for: game.id) { return cached }
         guard NetworkMonitor.isOnlineNow else { return nil }   // caller falls back to the cover
 
@@ -106,6 +123,10 @@ actor ArtFetcher {
         } else {
             switch game.source {
             case .steam(let id): appId = id
+            case .playCover(let bundleID, _):
+                if await PlayCoverCatalog.shared.storeInfo(bundleID: bundleID) == nil {
+                    appId = await PlayCoverCatalog.shared.exactSteamAppID(title: coverSearch ?? game.title)
+                } else { appId = nil }
             default:
                 if let knownAppId = game.metadata.viaLauncherAppId {
                     appId = knownAppId
@@ -114,10 +135,10 @@ actor ArtFetcher {
                 }
             }
         }
-        guard let id = appId,
-              let url = URL(string: "https://cdn.akamai.steamstatic.com/steam/apps/\(id)/header.jpg")
-        else { return nil }
-        return await downloadHeader(from: url, gameId: game.id)
+        if let id = appId,
+           let url = URL(string: "https://cdn.akamai.steamstatic.com/steam/apps/\(id)/header.jpg"),
+           let art = await downloadHeader(from: url, gameId: game.id) { return art }
+        return nil
     }
 
     // MARK: - Wide hero art (Steam library_hero.jpg) for the carousel backdrop
@@ -127,7 +148,18 @@ actor ArtFetcher {
     // portrait cover does (Steam source → Fix-Cover override → store search). Returns nil
     // when no Steam match exists (caller falls back to the theme background).
     func fetchHero(for game: Game) async -> URL? {
-        if let cached = await ArtCache.shared.cachedHeroURL(for: game.id) { return cached }
+        await preparePlayCoverArt(for: game)
+        if case .playCover(let bundleID, _) = game.source,
+           UserDefaults.standard.integer(forKey: "coverSteamId_\(game.id.uuidString)") == 0,
+           await PlayCoverCatalog.shared.storeInfo(bundleID: bundleID) != nil { return nil }
+        if let cached = await ArtCache.shared.cachedHeroURL(for: game.id) {
+            // Older PlayCover builds could cache a portrait App Store screenshot here.
+            // Never stretch an icon or phone screenshot across the whole window.
+            if case .playCover = game.source {
+                return Self.isWideHero(cached) ? cached : nil
+            }
+            return cached
+        }
         guard NetworkMonitor.isOnlineNow else { return nil }   // caller shows the theme backdrop
 
         let key = game.id.uuidString
@@ -141,6 +173,8 @@ actor ArtFetcher {
         } else {
             switch game.source {
             case .steam(let id): appId = id
+            case .playCover:
+                appId = await PlayCoverCatalog.shared.exactSteamAppID(title: coverSearch ?? game.title)
             default:
                 if let knownAppId = game.metadata.viaLauncherAppId {
                     appId = knownAppId
@@ -149,10 +183,32 @@ actor ArtFetcher {
                 }
             }
         }
-        guard let id = appId,
-              let url = URL(string: "https://cdn.akamai.steamstatic.com/steam/apps/\(id)/library_hero.jpg")
-        else { return nil }
-        return await downloadHero(from: url, gameId: game.id)
+        if let id = appId,
+           let url = URL(string: "https://cdn.akamai.steamstatic.com/steam/apps/\(id)/library_hero.jpg"),
+           let art = await downloadHero(from: url, gameId: game.id) { return art }
+        return nil
+    }
+
+    private static func isWideHero(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return false }
+        return width >= 1200 && Double(width) / Double(height) >= 1.4
+    }
+
+    private func preparePlayCoverArt(for game: Game) async {
+        guard case .playCover = game.source else { return }
+        let key = "playCoverAppleArtV2_\(game.id.uuidString)"
+        if let task = playCoverMigration[game.id] { await task.value; return }
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let task = Task {
+            await ArtCache.shared.remove(for: game.id)
+            UserDefaults.standard.set(true, forKey: key)
+        }
+        playCoverMigration[game.id] = task
+        await task.value
+        playCoverMigration.removeValue(forKey: game.id)
     }
 
     private func downloadHero(from url: URL, gameId: UUID) async -> URL? {

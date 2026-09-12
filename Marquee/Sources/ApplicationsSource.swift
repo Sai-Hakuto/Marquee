@@ -20,6 +20,7 @@ struct ApplicationsSource {
     // showed up as a false positive during development.
     private static let excludedBundleIDs: Set<String> = [
         "com.epicgames.EpicGamesLauncher",
+        "com.marquee.gaming-launcher",
     ]
 
     private static let iconCacheDir = FileManager.default.homeDirectoryForCurrentUser

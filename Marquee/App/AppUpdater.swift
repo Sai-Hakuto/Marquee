@@ -18,7 +18,8 @@ final class AppUpdater {
     private init() {}
 
     // owner/repo — the public GitHub repo this app checks against for new releases.
-    private static let repoSlug = "jackharvest/Marquee"
+    // Fork releases must not be replaced by upstream builds without PlayCover support.
+    private static let repoSlug = "Sai-Hakuto/Marquee"
 
     private(set) var isBusy = false
 

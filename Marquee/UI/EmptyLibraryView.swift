@@ -29,6 +29,7 @@ struct EmptyLibraryView: View {
                 •  CrossOver bottles (Windows games, incl. a bottled Steam library)
                 •  Steam for Mac  •  Epic Games Launcher  •  GOG
                 •  Mac App Store games in /Applications
+                •  iOS games installed through PlayCover
 
                 Install a game through any of them, then refresh.
                 """)

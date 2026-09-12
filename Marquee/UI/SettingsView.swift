@@ -31,7 +31,7 @@ struct SettingsView: View {
     // Favorites/Hidden are situational (only meaningful once the user has some), not a genuine
     // "always start here" library-wide default — left off this picker on purpose.
     private static let startupFilterChoices: [AppState.SourceFilter] =
-        [.all, .crossOver, .steam, .epic, .gog, .applications]
+        [.all, .crossOver, .steam, .epic, .gog, .applications, .playCover]
 
     var body: some View {
         ScrollView {

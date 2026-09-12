@@ -60,28 +60,33 @@ actor GameDetailsFetcher {
         // Online fields from the Steam store (no API key). Offline, skip straight to the
         // local-only placeholder rather than burning three doomed store-search attempts.
         let online = NetworkMonitor.isOnlineNow
-        let steam = online ? await fetchSteam(for: game) : nil
+        let apple: PlayCoverStoreInfo?
+        if online, case .playCover(let bundleID, _) = game.source {
+            apple = await PlayCoverCatalog.shared.storeInfo(bundleID: bundleID)
+        } else { apple = nil }
+        let steam = online && apple == nil ? await fetchSteam(for: game) : nil
 
         // File size from disk (can be slow on big installs — already off-main here).
         let fileSize = fsURL.map { Self.formattedDirectorySize($0) } ?? "—"
 
         let details = GameDetails(
-            publisher: steam?.publisher ?? "\(game.sourceBadgeTitle)",
-            releaseDate: steam?.releaseDate ?? "—",
+            publisher: apple.map { "\($0.publisher) (via PlayCover)" }
+                ?? steam?.publisher ?? game.sourceBadgeTitle,
+            releaseDate: apple?.releaseDate ?? steam?.releaseDate ?? "—",
             players: steam?.players ?? "—",
             gameID: gameID,
             fileSize: fileSize,
             location: locationDisplay,
-            genre: steam?.genre ?? (game.metadata.genre ?? "—"),
-            about: steam?.about ?? (online
-                ? "No description available for this title."
+            genre: apple?.genre.nilIfEmpty ?? steam?.genre ?? (game.metadata.genre ?? "—"),
+            about: apple?.about.nilIfEmpty ?? steam?.about ?? (online
+                ? "No catalog description available for this title."
                 : "You're offline — details for this game will load once you reconnect."),
             logoURL: steam?.logoURL,
-            screenshots: steam?.screenshots ?? [],
+            screenshots: apple?.screenshots ?? steam?.screenshots ?? [],
             trailerURL: steam?.trailerURL
         )
         cache[game.id] = details
-        if steam == nil && !online { offlineMisses.insert(game.id) }
+        if apple == nil && steam == nil && !online { offlineMisses.insert(game.id) }
         return details
     }
 
@@ -110,6 +115,10 @@ actor GameDetailsFetcher {
         switch game.source {
         case .steam(let id):
             appId = id
+        case .playCover:
+            let override = UserDefaults.standard.integer(forKey: "coverSteamId_\(game.id.uuidString)")
+            appId = override > 0 ? override
+                : await PlayCoverCatalog.shared.exactSteamAppID(title: game.title)
         default:
             // Honour a Fix-Cover Steam App ID override, else resolve via store search.
             let override = UserDefaults.standard.integer(forKey: "coverSteamId_\(game.id.uuidString)")
@@ -224,7 +233,7 @@ actor GameDetailsFetcher {
             // Unknown game folder — show the bottle but DON'T measure it (would be the
             // size of every game in that bottle).
             return ("\(bottleURL.path) (bottle — game folder not found)", nil)
-        case .applications(let url), .gog(_, let url):
+        case .applications(let url), .gog(_, let url), .playCover(_, let url):
             return (url.path, FileManager.default.fileExists(atPath: url.path) ? url : nil)
         case .epic(let appName, _):
             return ("Epic Games · \(appName)", nil)

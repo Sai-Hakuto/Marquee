@@ -4,6 +4,12 @@
 
 <h1 align="center">Marquee</h1>
 
+This fork adds native PlayCover integration. Installed iOS games appear under a PlayCover
+source filter and launch from their PlayCover app bundles. Details and screenshots come
+from Apple's catalog by exact bundle identifier, or from an exact-title Steam match when
+the app is absent there. The installed app icon is the final cover fallback. Updates are
+checked against this fork's releases so upstream builds cannot replace the integration.
+
 <p align="center"><strong>All your Mac games on one shelf.</strong><br>
 A console-style game launcher for macOS that finds every game you own — CrossOver, Steam, Epic, GOG, and the Mac App Store — and puts them in one beautiful, couch-friendly library.</p>
 

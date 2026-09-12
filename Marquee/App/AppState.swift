@@ -440,6 +440,7 @@ final class AppState {
     private func customEntryPath(for game: Game) -> String? {
         switch game.source {
         case .applications(let url): return url.path
+        case .playCover(_, let url): return url.path
         case .crossOver(_, let exePath): return exePath.isEmpty ? nil : exePath
         default: return nil
         }
@@ -496,6 +497,7 @@ final class AppState {
         filteredGames.firstIndex { game in
             switch game.source {
             case .applications(let url):     return url.path == path
+            case .playCover(_, let url):     return url.path == path
             case .crossOver(_, let exePath): return exePath == path
             default:                         return false
             }
@@ -659,7 +661,7 @@ final class AppState {
     }
 
     enum SourceFilter: String, CaseIterable {
-        case all, favorites, crossOver, steam, epic, gog, applications, hidden
+        case all, favorites, crossOver, steam, epic, gog, applications, playCover, hidden
 
         var label: String {
             switch self {
@@ -670,6 +672,7 @@ final class AppState {
             case .epic:         return "Epic"
             case .gog:          return "GOG"
             case .applications: return "Mac"
+            case .playCover:    return "PlayCover"
             case .hidden:       return "Hidden"
             }
         }
@@ -793,6 +796,7 @@ final class AppState {
         case .epic:         return 2
         case .gog:          return 3
         case .applications: return 4
+        case .playCover:    return 5
         }
     }
 
@@ -898,6 +902,7 @@ final class AppState {
                     case (.epic,         .epic):         return true
                     case (.gog,          .gog):          return true
                     case (.applications, .applications): return true
+                    case (.playCover,    .playCover):    return true
                     default: return false
                     }
                 }
@@ -944,8 +949,9 @@ final class AppState {
         async let epic      = Task.detached { EpicSource.scan() }.value
         async let gog       = Task.detached { GOGSource.scan() }.value
         async let apps      = Task.detached { ApplicationsSource.scan() }.value
+        async let playCover = Task.detached { PlayCoverSource.scan() }.value
         async let custom    = Task.detached { CustomSource.scan() }.value
-        var all = await crossOver + steam + epic + gog + apps + custom
+        var all = await crossOver + steam + epic + gog + apps + playCover + custom
         // Custom entries last + unique-by-id: a user scan folder that overlaps a built-in
         // scanner's territory (say, /Applications itself) yields the identical stable UUID
         // for the same bundle, so the built-in's richer result wins and nothing double-shows.
