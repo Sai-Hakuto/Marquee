@@ -29,6 +29,9 @@ extension ContentView {
     // closure's full body into that generic call's overload resolution and blew its type-check
     // time budget. A plain method is checked independently, no matter how many branches it has.
     func routeKeyDown(_ event: NSEvent) -> NSEvent? {
+        // The monitor is process-wide, even though ContentView belongs only to the library
+        // window. Let the IPA Store's native TextField and version picker handle their keys.
+        if isIPAStoreEvent(event) { return event }
         // Cmd+F — jump straight to the search field from any page/view (matches the ⌘F hint
         // shown in the pill when it's empty and unfocused). Checked before the searchEditing
         // passthrough below so it also works as a no-op-but-stay-focused shortcut while already
@@ -112,6 +115,10 @@ extension ContentView {
         updateCarouselRing()
         if handled { return nil }
         return event
+    }
+
+    func isIPAStoreEvent(_ event: NSEvent) -> Bool {
+        event.window?.identifier?.rawValue == "ipa-store" || event.window?.title == "IPA Store"
     }
 
     // While the search TextField has real first-responder focus, only Esc is ours (blur back to

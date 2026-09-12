@@ -175,5 +175,12 @@ struct MarqueeApp: App {
                 .environment(soundEffects)
                 .preferredColorScheme(.dark)
         }
+
+        Window("IPA Store", id: "ipa-store") {
+            IPAStoreView()
+                .environment(delegate.appState)
+                .frame(minWidth: 900, minHeight: 650)
+        }
+        .defaultSize(width: 1350, height: 850)
     }
 }

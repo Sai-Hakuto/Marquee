@@ -9,6 +9,12 @@ source filter and launch from their PlayCover app bundles. Details and screensho
 from Apple's catalog by exact bundle identifier, or from an exact-title Steam match when
 the app is absent there. The installed app icon is the final cover fallback. Updates are
 checked against this fork's releases so upstream builds cannot replace the integration.
+The IPA Store window browses the public iPASTORE and CyPwn catalogs, groups exact bundle-ID
+matches into one card, and keeps each source and build selectable. Downloads are saved in
+Marquee's application-support folder and can be handed to PlayCover for import. Apple's public
+lookup data supplies game subgenres and classifies CyPwn titles only when the bundle ID matches
+exactly; unmatched CyPwn titles remain Unsorted. Saved IPAs can be moved to Trash in the store.
+Installed apps are identified from PlayCover's library and uninstalled through PlayCover.
 
 <p align="center"><strong>All your Mac games on one shelf.</strong><br>
 A console-style game launcher for macOS that finds every game you own — CrossOver, Steam, Epic, GOG, and the Mac App Store — and puts them in one beautiful, couch-friendly library.</p>
@@ -34,6 +40,7 @@ browse, search, and play from — no manual list-building, ever.
 
 - **Seven view modes** — Carousel, Rainbow Slide, Big, Grid, Wall, List, Compact List — ⌘1–7
 - **Every store, found automatically** — CrossOver, Steam, Epic, GOG, Mac App Store, no manual entry
+- **IPA Store** — search and filter iOS games and apps, compare source variants, and send downloaded IPAs to PlayCover
 - **Bring your own library** — drag any app or exe onto the window (Plex, emulators, anything) and remove it just as easily
 - **A console-style pause menu** — every setting, zero menu bar, controller-first
 - **Boots like a console** — Launch at Login + Start in Full Screen, couch-ready
@@ -48,11 +55,10 @@ browse, search, and play from — no manual list-building, ever.
 ## Getting started
 
 Mac only, Apple Silicon — Marquee exists to fill the hole [Playnite](https://playnite.link) leaves on
-the Mac. Grab the latest [release](https://github.com/jackharvest/Marquee/releases/latest): drag
-`Marquee.app` into `/Applications`, or build from source:
+the Mac. Build this fork from source:
 
 ```bash
-git clone https://github.com/jackharvest/Marquee.git
+git clone https://github.com/Sai-Hakuto/Marquee.git
 cd Marquee
 make run     # builds Marquee.app and opens it
 ```
@@ -80,8 +86,8 @@ Menu shortcuts, `.acf` manifests, bundle markers). Details on the [website](http
 Marquee is private by design, and the first-launch flow spells this out before asking anything of you:
 
 - **Reads your game libraries** — the folders above, read-only, to find installed games.
-- **Writes only its own files** — cover art cache and settings live in your user Library folder. Marquee never modifies games or other apps.
-- **Goes online only for cover art** — Steam's public listings or SteamGridDB, your choice. No account required, no analytics, no tracking, ever.
+- **Writes only its own files** — cover art cache, settings, and IPA downloads live in your user Library folder. Marquee does not alter other apps or IPA contents.
+- **Goes online for art and IPA catalogs** — the IPA Store fetches public iPASTORE and CyPwn catalogs and caches exact bundle-ID genre lookups from Apple. IPA downloads start only when selected. No account or analytics are built into Marquee.
 - **No macOS permissions required** — Marquee never prompts for privacy access. If macOS ever mentions app changes when a CrossOver game launches, that's CrossOver tidying its own generated shortcuts (Marquee launches wine with its responsibility disclaimed so the OS attributes that housekeeping correctly — and denying it is harmless either way).
 
 ## Support

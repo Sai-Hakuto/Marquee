@@ -65,6 +65,20 @@ extension ContentView {
 
             // View mode buttons — right anchor, same min-width as logo group
             HStack(spacing: 4) {
+                Button { openWindow(id: "ipa-store") } label: {
+                    Label("IPA Store", systemImage: "bag.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 9)
+                        .frame(height: 28)
+                        .background(Color.white.opacity(0.13))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help("Browse and install iOS apps and games")
+
+                Rectangle().fill(.white.opacity(0.18))
+                    .frame(width: 1, height: 16).padding(.horizontal, 3)
+
                 ForEach(Array(AppState.ViewMode.allCases.enumerated()), id: \.element) { idx, mode in
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) {
@@ -292,7 +306,7 @@ extension ContentView {
                 themeSwatch(idx: idx, theme: theme)
             }
 
-            Text("v0.36.0")
+            Text("v0.36.1")
                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.18))
         }

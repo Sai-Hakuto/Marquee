@@ -17,6 +17,7 @@ struct ContentView: View {
     // Programmatic hook for the pause menu's "All Settings…" row (the Settings scene otherwise
     // only opens via the app menu/⌘, — unreachable in full screen or from a controller).
     @Environment(\.openSettings) var openSettings
+    @Environment(\.openWindow) var openWindow
     @State var carousel = CarouselController()
     @State var rainbowSlide = RainbowSlideController()
     @State private var showLogo = true
@@ -615,6 +616,7 @@ struct ContentView: View {
         // go before it completes — routeKeyDown only ever sees the press edge. Never consumes
         // the event; every other keyUp-driven behavior in the app is native AppKit/SwiftUI.
         keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { event in
+            if isIPAStoreEvent(event) { return event }
             if event.keyCode == 36 || event.keyCode == 49 { appState.cancelPlayHold() }
             return event
         }
@@ -673,6 +675,7 @@ struct ContentView: View {
         // equivalent is B / Esc) — controllers already have a dedicated back button and keyboard
         // users have Esc, so this is purely to give mouse-only users the same escape/back gesture.
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { event in
+            if isIPAStoreEvent(event) { return event }
             appState.lastInputMethod = .mouse
             // Reclaim real key-window status on every click. Once this borderless window loses
             // key status (switching to another app and back, a Fix Cover/Banner panel or system
